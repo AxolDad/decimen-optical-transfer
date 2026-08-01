@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Optical Transfer — kaleidoscope experiment</title>
+    <link rel="stylesheet" href="../shared/style.css" />
+  </head>
+  <body>
+    <h1>DECIMEN <small>— Kaleidoscope Symbology (EXPERIMENT)</small></h1>
+    <div class="hint">
+      The same fountain stream, drawn as a spinning mandala of colored wedges
+      instead of QR codes — 3 bits per wedge, sync by rotation, per-frame
+      color calibration ring. This page runs encoder and decoder in loopback
+      (no camera) to measure what the symbology is worth; the camera path is
+      future work. See <code>docs/KALEIDOSCOPE.md</code>.
+    </div>
+    <details class="settings" open>
+      <summary>Configuration</summary>
+      <div class="row">
+        <label>
+          canvas px
+          <select id="cfg-size">
+            <option>720</option>
+            <option selected>1080</option>
+            <option>1536</option>
+            <option>2160</option>
+          </select>
+        </label>
+        <label>
+          rings
+          <select id="cfg-rings">
+            <option>18</option>
+            <option selected>26</option>
+            <option>34</option>
+          </select>
+        </label>
+        <label>
+          sectors
+          <select id="cfg-sectors">
+            <option>48</option>
+            <option selected>64</option>
+            <option>96</option>
+            <option>128</option>
+          </select>
+        </label>
+        <label>
+          fps
+          <select id="cfg-fps">
+            <option>15</option>
+            <option selected>30</option>
+          </select>
+        </label>
+        <label>
+          sample noise
+          <select id="cfg-noise">
+            <option selected>0</option>
+            <option>10</option>
+            <option>20</option>
+            <option>35</option>
+          </select>
+        </label>
+        <label>
+          payload
+          <select id="cfg-payload">
+            <option value="131072" selected>128 KB</option>
+            <option value="524288">512 KB</option>
+          </select>
+        </label>
+      </div>
+      <div class="hint" style="text-align: left; padding-top: 8px">
+        Innermost ring: rotation sync (the marker wedge's position IS the
+        frame phase). Outermost ring: all 8 palette colors — the decoder
+        rebuilds its classifier from it every frame. Noise adds ±N per RGB
+        channel at sample time to probe classification margins.
+      </div>
+    </details>
+    <button id="run">Run loopback</button>
+    <div class="hint" id="status">idle</div>
+    <div class="stage" style="background: #0a0906"><canvas id="wheel" width="16" height="16"></canvas></div>
+    <pre id="log" style="text-align: left; font-size: 12px; overflow-x: auto"></pre>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

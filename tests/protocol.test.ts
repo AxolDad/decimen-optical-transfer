@@ -64,6 +64,9 @@ describe("packFrame / parseFrame", () => {
     const badMagic2 = good.slice();
     badMagic2[1] = 0xff;
     expect(parseFrame(badMagic2)).toBeNull();
+    const v1Frame = good.slice();
+    v1Frame[1] = 0x0c; // protocol v1 (raw payload, no envelope) — not ours
+    expect(parseFrame(v1Frame)).toBeNull();
     const zeroK = good.slice();
     zeroK[8] = 0;
     zeroK[9] = 0;

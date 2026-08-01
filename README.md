@@ -140,6 +140,11 @@ actual receiving device to measure that device's decode ceiling and to A/B
 tuning changes. (See `docs/IMPROVEMENT-PLAN.md` for the roadmap this
 supports.)
 
+`/kaleido/` is an experiment that renders the same fountain stream as a
+spinning 8-color mandala instead of QR codes — rotation as sync, a
+per-frame color-calibration ring, loopback decoder and all. Notes and
+measurements in `docs/KALEIDOSCOPE.md`.
+
 ## Similar projects
 
 The concept here was arrived at independently. It turns out

@@ -19,8 +19,9 @@
 //   (zero main-thread readback) when the browser supports it; otherwise a
 //   canvas crops on the main thread. Both feed the same worker decode.
 
+import { FLAG_DEFLATE, inflate, parseEnvelope } from "../shared/envelope";
 import { LTDecoder } from "../shared/fountain";
-import { fnv1a, parseFrame } from "../shared/protocol";
+import { fnv1a, parseFrame, sameStream, type FrameHeader } from "../shared/protocol";
 import { bboxOfCorners, roiFromCorners, type Pt, type Roi } from "./roi";
 
 // Expected frames ≈ K × this (robust-soliton ε). Measured in the test suite:
@@ -57,7 +58,7 @@ const metric = (id: string) => document.getElementById(id)!;
 
 let stream: MediaStream | null = null;
 let decoder: LTDecoder | null = null;
-let sessionId = 0;
+let streamHeader: FrameHeader | null = null;
 let startTs = 0;
 let captureGen = 0;
 let done = false;
@@ -380,9 +381,11 @@ function onDecoded(bytes: Uint8Array) {
   const parsed = parseFrame(bytes);
   if (!parsed || done) return;
   const { header, block } = parsed;
-  if (!decoder || sessionId !== header.sessionId) {
+  // Identity is the whole header tuple, not just the 16-bit session id —
+  // a colliding restart would otherwise fuse us to a dead decoder.
+  if (!decoder || !streamHeader || !sameStream(streamHeader, header)) {
     decoder = new LTDecoder(header.k, header.blockLen, header.sessionId, header.totalLen);
-    sessionId = header.sessionId;
+    streamHeader = header;
     startTs = performance.now();
     progressEl.style.display = "block";
   }
@@ -394,11 +397,11 @@ function onDecoded(bytes: Uint8Array) {
     const payload = decoder.assemble()!;
     const seconds = (performance.now() - startTs) / 1000;
     const ok = fnv1a(payload) === header.payloadFnv;
-    finish(payload, ok, seconds, header.totalLen);
+    void finish(payload, ok, seconds);
   }
 }
 
-function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen: number) {
+async function finish(envelope: Uint8Array, hashOk: boolean, seconds: number) {
   done = true;
   captureGen++;
   clearInterval(statsTimer);
@@ -409,18 +412,50 @@ function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen:
   wakeLock = null;
   preview.style.display = "none";
   bar.style.width = "100%";
-  const kb = Math.round(totalLen / 1024);
-  const rate = (totalLen / 1024 / seconds).toFixed(1);
-  stats.textContent = `${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+  const wireKb = Math.round(envelope.length / 1024);
+  const rate = (envelope.length / 1024 / seconds).toFixed(1);
+  stats.textContent = `${wireKb} KB over the air in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+
+  // Unwrap the v2 envelope: metadata + (possibly deflated) file bytes.
   const heading = document.createElement("div");
   heading.className = "done";
-  heading.textContent = "Transfer Complete!";
-  const img = document.createElement("img");
-  img.className = "received";
-  const url = URL.createObjectURL(new Blob([payload as BlobPart], { type: "image/png" }));
-  img.onload = () => URL.revokeObjectURL(url);
-  img.src = url;
-  result.append(heading, img);
+  const parsed = hashOk ? parseEnvelope(envelope) : null;
+  if (!parsed) {
+    heading.textContent = hashOk ? "Received, but the envelope is malformed" : "Transfer failed";
+    result.append(heading);
+    return;
+  }
+  let file: Uint8Array;
+  try {
+    file = parsed.flags & FLAG_DEFLATE ? await inflate(parsed.data) : parsed.data;
+  } catch (err) {
+    heading.textContent = `✗ ${err instanceof Error ? err.message : String(err)}`;
+    result.append(heading);
+    return;
+  }
+  const sizeOk = file.length === parsed.meta.size;
+  heading.textContent = sizeOk ? "Transfer Complete!" : "Size mismatch after decompression";
+  const info = document.createElement("div");
+  info.className = "hint";
+  info.textContent =
+    `${parsed.meta.name} · ${Math.round(parsed.meta.size / 1024)} KB` +
+    (parsed.flags & FLAG_DEFLATE ? ` (sent as ${wireKb} KB deflated)` : "");
+  const url = URL.createObjectURL(
+    new Blob([file as BlobPart], { type: parsed.meta.mime || "application/octet-stream" }),
+  );
+  const dl = document.createElement("a");
+  dl.href = url;
+  dl.download = parsed.meta.name;
+  dl.textContent = `Download ${parsed.meta.name}`;
+  dl.className = "download";
+  result.append(heading, info, dl);
+  if (parsed.meta.mime.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.className = "received";
+    img.src = url; // kept alive for the download link — not revoked
+    result.append(img);
+  }
+  (navigator as Navigator & { vibrate?: (p: number[]) => void }).vibrate?.([100, 60, 100]);
 }
 
 function updateStats() {

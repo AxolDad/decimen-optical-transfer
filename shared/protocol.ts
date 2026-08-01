@@ -4,17 +4,18 @@
 //
 // Layout (little-endian), 20 bytes, followed by `blockLen` payload bytes:
 //   0  u8   magic 0xD1
-//   1  u8   magic 0x0C
+//   1  u8   magic 0x0D   (v2 — the fountain payload is an envelope, see
+//                         envelope.ts; v1's 0x0C carried raw bytes)
 //   2  u16  sessionId   random per sender start
 //   4  u32  seq         drives the fountain PRNG (see fountain.ts)
 //   8  u16  k           source block count
 //  10  u16  blockLen    payload bytes per frame
-//  12  u32  totalLen    file length in bytes
-//  16  u32  payloadFnv  FNV-1a of the whole file — verified on completion
+//  12  u32  totalLen    envelope length in bytes
+//  16  u32  payloadFnv  FNV-1a of the whole envelope — verified on completion
 
 export const HEADER_LEN = 20;
 const MAGIC0 = 0xd1;
-const MAGIC1 = 0x0c;
+const MAGIC1 = 0x0d;
 
 export interface FrameHeader {
   sessionId: number;
@@ -57,6 +58,19 @@ export function parseFrame(
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;
   return { header, block: bytes.subarray(HEADER_LEN) };
+}
+
+/** Same logical stream? A 16-bit session id alone can collide across sender
+ * restarts (1/65535 fuses the receiver to a dead decoder); geometry and the
+ * payload hash make the identity effectively unambiguous. */
+export function sameStream(a: FrameHeader, b: FrameHeader): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.k === b.k &&
+    a.blockLen === b.blockLen &&
+    a.totalLen === b.totalLen &&
+    a.payloadFnv === b.payloadFnv
+  );
 }
 
 export function fnv1a(bytes: Uint8Array): number {

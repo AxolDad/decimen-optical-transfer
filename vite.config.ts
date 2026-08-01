@@ -17,6 +17,7 @@ export default defineConfig({
         send: resolve(__dirname, "send/index.html"),
         receive: resolve(__dirname, "receive/index.html"),
         bench: resolve(__dirname, "bench/index.html"),
+        kaleido: resolve(__dirname, "kaleido/index.html"),
       },
     },
   },

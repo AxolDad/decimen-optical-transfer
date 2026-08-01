@@ -45,6 +45,21 @@ Headless E2E: a 2×2 tape at a 57.6 KB/s channel rate decodes 256 KB in 5.2 s �
 **49.5 KB/s, 86% channel efficiency, all 4 cells locked, hash verified**. On-phone
 acceptance (2 MB ≤ 20 s propped) still needs real hardware.
 
+Phase 3 is implemented: protocol v2 (magic 0xD1 0x0D — the fountain now carries the
+`shared/envelope.ts` envelope: flags + name/MIME/size metadata + file bytes), optional
+raw-deflate via CompressionStream (kept only when it pays), drag-drop/file-picker on the
+sender with a live size/ETA readout, download link + image preview + completion vibration
+on the receiver, and the full-header stale-session guard (`sameStream`, finding #8 fixed).
+Headless E2E: a 122 KB text file crossed the loop as a 20 KB deflated envelope and the
+downloaded blob is byte-exact with its filename intact; the 2×2 grid run is unregressed.
+
+Side quest (see `docs/KALEIDOSCOPE.md`): a working loopback experiment at `/kaleido/`
+renders the same fountain stream as a spinning 8-color polar mandala — rotation-as-sync,
+per-frame calibration ring, FNV-discard integrity — with the fountain/protocol/envelope
+stack unchanged underneath. Loopback-verified up to 2160px geometries, zero corrupt
+frames at ±35/channel sample noise. It stays an experiment until a camera-in-the-loop
+spike; the doc has the measured numbers, the 4K ceiling math, and the five gaps.
+
 ---
 
 ## Part 1 — Code review

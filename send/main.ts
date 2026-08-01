@@ -18,6 +18,7 @@
 // fountain frame, so the grid needs no protocol changes). The main thread
 // only flips pre-rendered tiles on vsync-counted rAF ticks.
 
+import { FLAG_DEFLATE, deflate, packEnvelope, type FileMeta } from "../shared/envelope";
 import { HEADER_LEN, fnv1a, type FrameHeader } from "../shared/protocol";
 import { estimateRefresh, vsyncPacing } from "./pacing";
 
@@ -28,6 +29,7 @@ const BATCH_PER_WORKER = 2; // outstanding gen requests per worker
 const canvas = document.getElementById("qr") as HTMLCanvasElement;
 const specs = document.getElementById("specs")!;
 const cfgPreset = document.getElementById("cfg-preset") as HTMLSelectElement;
+const cfgFile = document.getElementById("cfg-file") as HTMLInputElement;
 const cfgPayload = document.getElementById("cfg-payload") as HTMLSelectElement;
 const cfgFps = document.getElementById("cfg-fps") as HTMLSelectElement;
 const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
@@ -45,8 +47,26 @@ const PRESETS: Record<string, [number, number, number]> = {
 };
 
 const payloadCache = new Map<string, Uint8Array>();
+let customFile: { meta: FileMeta; bytes: Uint8Array } | null = null;
+const CUSTOM = "__custom__";
 let generation = 0; // bumped on every restart; stale loops and workers die
 let genWorkers: Worker[] = [];
+
+async function useFile(f: File) {
+  customFile = {
+    meta: { name: f.name, mime: f.type || "application/octet-stream", size: f.size },
+    bytes: new Uint8Array(await f.arrayBuffer()),
+  };
+  let opt = cfgPayload.querySelector<HTMLOptionElement>(`option[value="${CUSTOM}"]`);
+  if (!opt) {
+    opt = document.createElement("option");
+    opt.value = CUSTOM;
+    cfgPayload.append(opt);
+  }
+  opt.textContent = `${f.name} (${Math.round(f.size / 1024)} KB)`;
+  cfgPayload.value = CUSTOM;
+  void startStream();
+}
 
 // Measure the display's refresh rate once, in the background, at load.
 const refreshPromise = new Promise<number>((res) => {
@@ -70,6 +90,17 @@ async function loadPayload(url: string): Promise<Uint8Array | null> {
 }
 
 async function main() {
+  cfgFile.addEventListener("change", () => {
+    const f = cfgFile.files?.[0];
+    if (f) void useFile(f);
+  });
+  // drop a file anywhere on the page to send it
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer?.files?.[0];
+    if (f) void useFile(f);
+  });
   cfgPreset.addEventListener("change", () => {
     const p = PRESETS[cfgPreset.value];
     if (p) {
@@ -108,11 +139,32 @@ async function startStream() {
   for (const w of genWorkers) w.terminate();
   genWorkers = [];
 
-  const payload = await loadPayload(cfgPayload.value);
-  if (!payload) {
-    specs.textContent = `✗ couldn't load ${cfgPayload.value}`;
-    return;
+  // Resolve the source file (a dropped/picked file, or a demo image), then
+  // build the v2 envelope the fountain will carry: metadata + (optionally
+  // deflated) bytes. Compression is kept only when it actually pays.
+  let meta: FileMeta;
+  let fileBytes: Uint8Array;
+  if (cfgPayload.value === CUSTOM && customFile) {
+    meta = customFile.meta;
+    fileBytes = customFile.bytes;
+  } else {
+    const url = cfgPayload.value === CUSTOM ? "../success.png" : cfgPayload.value;
+    const fetched = await loadPayload(url);
+    if (!fetched) {
+      specs.textContent = `✗ couldn't load ${url}`;
+      return;
+    }
+    fileBytes = fetched;
+    meta = { name: url.split("/").pop() ?? "payload.bin", mime: "image/png", size: fetched.length };
   }
+  let data = fileBytes;
+  let flags = 0;
+  const squeezed = await deflate(fileBytes);
+  if (squeezed && squeezed.length < fileBytes.length * 0.97) {
+    data = squeezed;
+    flags = FLAG_DEFLATE;
+  }
+  const payload = packEnvelope(meta, data, flags);
   const refresh = await refreshPromise;
   if (gen !== generation) return; // superseded while waiting
 
@@ -201,10 +253,16 @@ async function startStream() {
           tileH = msg.h;
           sizeCanvas();
           const raw = (codes * blockLen * fps) / 1024;
+          const est = Math.ceil((payload.length * 1.18) / (codes * blockLen * fps));
+          const squeezeNote =
+            flags & FLAG_DEFLATE
+              ? ` (deflated to ${Math.round((100 * data.length) / meta.size)}%)`
+              : "";
           specsBase =
+            `${meta.name} · ${Math.round(meta.size / 1024)} KB${squeezeNote} · ` +
             `${fps.toFixed(fps % 1 ? 1 : 0)} fps (${ticks}v @ ${refresh} Hz) · ` +
             `${codes}× ${frameBytes} B · V${msg.version} · ECC ${ecc} · ` +
-            `${Math.round(payload.length / 1024)} KB · K=${k} · raw ${raw.toFixed(0)} KB/s`;
+            `K=${k} · raw ${raw.toFixed(0)} KB/s · ≈${est}s`;
           specs.textContent = specsBase;
         }
         dispatch();
