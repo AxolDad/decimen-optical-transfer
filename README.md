@@ -113,8 +113,10 @@ the #1 throughput killer.
 
 | setting | default | notes |
 |---|---|---|
-| tx fps | 30 | each frame must own at least 2 refresh cycles of the display; 30 is exactly 2 on a 60 Hz screen (24 alternates 2/3 and invites straddled captures) — drop to 24/20 if your capture struggles |
+| preset | balanced | steady / balanced / dense / grid / ludicrous — one knob that sets fps, density, and grid together |
+| target fps | 30 | frames are held for a whole number of refresh cycles (min 2), so the *actual* fps — shown in the status line — is the nearest exact division of your display's measured refresh rate; a 120 Hz display unlocks 60 |
 | bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2953 (v40) works phone-to-phone at close range |
+| codes / frame | 1 | 2 or 4 codes per displayed frame multiply the channel (each is an independent fountain frame — no protocol change), but shrink the modules: get closer, prop the phone, use a big display |
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s

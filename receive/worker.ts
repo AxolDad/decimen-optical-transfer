@@ -112,21 +112,28 @@ ctx.onmessage = async (e: MessageEvent) => {
     data.frame?.close();
   }
   if (!img) {
-    ctx.postMessage({ id, bytes: null, corners: null, ms: 0, unsupported });
+    ctx.postMessage({ id, results: [], ms: 0, unsupported });
     return;
   }
   const t0 = performance.now();
   try {
-    const results = await readBarcodes(img, opts ?? FAST);
+    // A grid sender shows several codes per frame — report every symbol
+    // found (each is an independent fountain frame with its own corners).
+    const found = await readBarcodes(img, opts ?? FAST);
     const ms = performance.now() - t0;
-    const r = results.find((x) => x.isValid && x.bytes.length > 0);
-    const p = r?.position;
-    const corners = p
-      ? [p.topLeft, p.topRight, p.bottomRight, p.bottomLeft].map((q) => ({ x: q.x, y: q.y }))
-      : null;
-    ctx.postMessage({ id, bytes: r ? r.bytes : null, corners, ms });
+    const results = found
+      .filter((x) => x.isValid && x.bytes.length > 0)
+      .map((x) => ({
+        bytes: x.bytes,
+        corners: x.position
+          ? [x.position.topLeft, x.position.topRight, x.position.bottomRight, x.position.bottomLeft].map(
+              (q) => ({ x: q.x, y: q.y }),
+            )
+          : null,
+      }));
+    ctx.postMessage({ id, results, ms });
   } catch {
-    ctx.postMessage({ id, bytes: null, corners: null, ms: performance.now() - t0 });
+    ctx.postMessage({ id, results: [], ms: performance.now() - t0 });
   }
 };
 

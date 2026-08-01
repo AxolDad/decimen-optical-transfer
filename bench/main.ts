@@ -221,14 +221,19 @@ async function run() {
 
   for (const w of workers) {
     w.onmessage = (e: MessageEvent) => {
-      const { id, bytes } = e.data as { id: number; bytes: Uint8Array | null };
+      const { id, results } = e.data as {
+        id: number;
+        results?: { bytes: Uint8Array }[];
+      };
       if (id === -1) return;
       decMs += performance.now() - (sendTimes.get(id) ?? performance.now());
       sendTimes.delete(id);
-      if (bytes) {
+      if (results && results.length > 0) {
         hits++;
-        const parsed = parseFrame(bytes);
-        if (parsed) decoder.addFrame(parsed.header.seq, parsed.block);
+        for (const r of results) {
+          const parsed = parseFrame(r.bytes);
+          if (parsed) decoder.addFrame(parsed.header.seq, parsed.block);
+        }
       } else {
         misses++;
       }

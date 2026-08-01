@@ -22,13 +22,18 @@ export interface Roi {
   h: number;
 }
 
-export function roiFromCorners(
-  corners: Pt[],
-  vw: number,
-  vh: number,
-  marginFrac = 0.25,
-  quant = 32,
-): Roi | null {
+export interface Bbox {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+/** Axis-aligned bounds of a decoded symbol's corners — the symbol's TRUE
+ * center and size. Cell identity must be matched on this, never on the crop
+ * rect: crops clamp at frame edges, which squeezes neighboring crops'
+ * centers together (a near-fullscreen 2×2 grid merged its rows that way). */
+export function bboxOfCorners(corners: Pt[]): Bbox | null {
   if (corners.length === 0) return null;
   let minX = Infinity;
   let minY = Infinity;
@@ -41,16 +46,28 @@ export function roiFromCorners(
     if (c.y < minY) minY = c.y;
     if (c.y > maxY) maxY = c.y;
   }
-  const bw = maxX - minX;
-  const bh = maxY - minY;
-  if (bw < 8 || bh < 8) return null; // degenerate position — don't trust it
-  const m = marginFrac * Math.max(bw, bh);
-  let w = Math.ceil((bw + 2 * m) / quant) * quant;
-  let h = Math.ceil((bh + 2 * m) / quant) * quant;
+  const w = maxX - minX;
+  const h = maxY - minY;
+  if (w < 8 || h < 8) return null; // degenerate position — don't trust it
+  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, w, h };
+}
+
+export function roiFromCorners(
+  corners: Pt[],
+  vw: number,
+  vh: number,
+  marginFrac = 0.25,
+  quant = 32,
+): Roi | null {
+  const b = bboxOfCorners(corners);
+  if (!b) return null;
+  const m = marginFrac * Math.max(b.w, b.h);
+  let w = Math.ceil((b.w + 2 * m) / quant) * quant;
+  let h = Math.ceil((b.h + 2 * m) / quant) * quant;
   w = Math.min(w, vw & ~1);
   h = Math.min(h, vh & ~1);
-  let x = Math.round((minX + maxX) / 2 - w / 2);
-  let y = Math.round((minY + maxY) / 2 - h / 2);
+  let x = Math.round(b.cx - w / 2);
+  let y = Math.round(b.cy - h / 2);
   x = Math.max(0, Math.min(x, vw - w)) & ~1;
   y = Math.max(0, Math.min(y, vh - h)) & ~1;
   return { x, y, w, h };

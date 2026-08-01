@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coversFrame, roiFromCorners } from "../receive/roi";
+import { bboxOfCorners, coversFrame, roiFromCorners } from "../receive/roi";
 
 const square = (x: number, y: number, s: number) => [
   { x, y },
@@ -55,6 +55,29 @@ describe("roiFromCorners", () => {
     expect(roi.h % 2).toBe(0);
     expect(roi.x + roi.w).toBeLessThanOrEqual(1281);
     expect(roi.y + roi.h).toBeLessThanOrEqual(959);
+  });
+
+  it("keeps symbol identity distinct even when clamped crops overlap", () => {
+    // Regression: a 2×2 grid nearly filling a 640×520 frame. The two codes
+    // in a column are 255 px apart, but their CROPS clamp at the frame edge
+    // and end up with centers only ~170 px apart. Matching cells on crop
+    // centers merged the rows; bboxOfCorners must preserve the real gap.
+    const top = square(101, 17, 231);
+    const bottom = square(101, 272, 231);
+    const bTop = bboxOfCorners(top)!;
+    const bBottom = bboxOfCorners(bottom)!;
+    const trueGap = Math.hypot(bTop.cx - bBottom.cx, bTop.cy - bBottom.cy);
+    expect(trueGap).toBe(255);
+    // identity threshold used by the receiver: 0.6 × symbol size
+    expect(trueGap).toBeGreaterThan(0.6 * Math.max(bTop.w, bTop.h));
+    // …while the clamped crops really do collapse together (the trap):
+    const rTop = roiFromCorners(top, 640, 520)!;
+    const rBottom = roiFromCorners(bottom, 640, 520)!;
+    const cropGap = Math.hypot(
+      rTop.x + rTop.w / 2 - (rBottom.x + rBottom.w / 2),
+      rTop.y + rTop.h / 2 - (rBottom.y + rBottom.h / 2),
+    );
+    expect(cropGap).toBeLessThan(trueGap);
   });
 
   it("rejects degenerate or non-finite positions", () => {

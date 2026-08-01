@@ -13,6 +13,17 @@
       <summary>Settings</summary>
       <div class="row">
         <label>
+          preset
+          <select id="cfg-preset">
+            <option value="">custom</option>
+            <option value="steady">steady — 1 code @ 20</option>
+            <option value="balanced" selected>balanced — 1 code @ 30</option>
+            <option value="dense">dense — v40 @ 30</option>
+            <option value="grid">grid — 2×2 @ 30</option>
+            <option value="ludicrous">ludicrous — 2×2 @ 60</option>
+          </select>
+        </label>
+        <label>
           payload
           <select id="cfg-payload">
             <option value="../success.png" selected>512 KB image</option>
@@ -20,7 +31,7 @@
           </select>
         </label>
         <label>
-          tx fps
+          target fps
           <select id="cfg-fps">
             <option>10</option>
             <option>15</option>
@@ -28,6 +39,14 @@
             <option>24</option>
             <option selected>30</option>
             <option>60</option>
+          </select>
+        </label>
+        <label>
+          codes / frame
+          <select id="cfg-grid">
+            <option selected>1</option>
+            <option>2</option>
+            <option>4</option>
           </select>
         </label>
         <label>
@@ -58,6 +77,10 @@
       <div class="hint" style="text-align: left; padding-top: 8px">
         Changes restart the stream — the receiver resets automatically (new
         session id in the frame headers; that's the fountain protocol's gift).
+        Frames are held for a whole number of display refresh cycles, so the
+        actual fps (shown above) is the nearest exact division of your
+        screen's refresh rate. Grids multiply data per frame but shrink the
+        modules — get closer or use a bigger display.
       </div>
     </details>
     <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>

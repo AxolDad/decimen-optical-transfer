@@ -33,6 +33,18 @@ Verified end-to-end headless: synthetic I420 camera frames → rVFC → workers 
 fountain completion, hash verified. The on-phone acceptance check (decode fps ≥ capture
 fps at 1280-wide) still needs real hardware.
 
+Phase 2 is implemented: vsync-integer pacing from a measured refresh rate (`send/pacing.ts`,
+findings #4/#5 fixed), QR generation moved to a 2-worker pool rendering whole display tiles,
+1/2/4-code grids (`send/layout.ts`), presets (steady/balanced/dense/grid/ludicrous), and
+multi-cell ROI tracking on the receiver with a 1 Hz discovery sweep. The E2E harness caught
+two real receiver bugs before any phone did: decode jobs were only dispatched on capture
+ticks (cells beyond the free-worker count went unserviced — fixed with a drain-on-reply
+queue), and cell identity was matched on clamped crop centers, which merged the rows of a
+near-fullscreen grid (fixed by matching on symbol-bbox centers; regression-tested).
+Headless E2E: a 2×2 tape at a 57.6 KB/s channel rate decodes 256 KB in 5.2 s —
+**49.5 KB/s, 86% channel efficiency, all 4 cells locked, hash verified**. On-phone
+acceptance (2 MB ≤ 20 s propped) still needs real hardware.
+
 ---
 
 ## Part 1 — Code review

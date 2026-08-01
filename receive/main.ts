@@ -21,20 +21,23 @@
 
 import { LTDecoder } from "../shared/fountain";
 import { fnv1a, parseFrame } from "../shared/protocol";
-import { roiFromCorners, type Pt, type Roi } from "./roi";
+import { bboxOfCorners, roiFromCorners, type Pt, type Roi } from "./roi";
 
 // Expected frames ≈ K × this (robust-soliton ε). Measured in the test suite:
 // 1.11–1.28 depending on K (small K trends worse); 1.18 is a mid estimate
 // used only for the progress bar and the goodput readout.
 const OVERHEAD_EST = 1.18;
-const MISS_LIMIT = 12; // consecutive misses before giving up a locked ROI
+const MISS_LIMIT = 12; // consecutive misses before dropping a locked cell
+const MAX_CELLS = 4; // grid senders show at most 2×2 codes per frame
+const SWEEP_MS = 1000; // while locked, rescan the full frame this often
 
-// Acquisition wants to FIND a code (unknown scale, maybe blurry): let zxing
-// try harder and try downscaled passes. Rotation/inversion stay off — QR
-// finder patterns are orientation-free and the sender never inverts.
+// Acquisition wants to FIND codes (unknown scale, maybe blurry): let zxing
+// try harder and try downscaled passes, and report every symbol — a grid
+// sender shows up to four. Rotation/inversion stay off — QR finder patterns
+// are orientation-free and the sender never inverts.
 const ACQUIRE_OPTS = {
   formats: ["QRCode"] as string[],
-  maxNumberOfSymbols: 1,
+  maxNumberOfSymbols: MAX_CELLS,
   tryHarder: true,
   tryRotate: false,
   tryInvert: false,
@@ -61,18 +64,30 @@ let done = false;
 let statsTimer = 0;
 let wakeLock: { release(): Promise<void> } | null = null;
 
-// ROI / capture-path state
-let roi: Roi | null = null; // null = full-frame acquisition
-let missStreak = 0;
+// ROI / capture-path state. One tracked cell per code on screen — a grid
+// sender has up to four, each an independent crop serviced by the pool.
+// cx/cy is the SYMBOL's center (from its corners), kept separately from the
+// crop rect: crops clamp at frame edges, so their centers can't be used for
+// identity (a near-fullscreen grid's rows would merge).
+interface Cell {
+  id: number;
+  roi: Roi;
+  cx: number;
+  cy: number;
+  miss: number;
+}
+let cells: Cell[] = []; // empty = full-frame acquisition
+let nextCellId = 1;
+let rotor = 0; // rotates per-tick service order so no cell starves
+let lastSweep = 0;
 let useVideoFrame = typeof VideoFrame === "function";
 let vfUnsupported = 0; // frames whose pixel format the worker couldn't read
-let lastRoiHitId = -1; // ignore position updates from older frames
 let emaDecMs = 0;
 let focusFrozen = false;
 
 const workers: Worker[] = [];
 const busy: boolean[] = [];
-const crops = new Map<number, { ox: number; oy: number }>();
+const crops = new Map<number, { ox: number; oy: number; cellId: number }>();
 const captureTimes: number[] = [];
 const decodeTimes: number[] = [];
 
@@ -138,13 +153,43 @@ async function start() {
   }
 }
 
+/** Fold a decoded symbol's absolute corners into the tracked cell set:
+ * refresh the nearest cell, or start tracking a new one. */
+function absorbPosition(abs: Pt[]) {
+  const b = bboxOfCorners(abs);
+  const next = roiFromCorners(abs, video.videoWidth, video.videoHeight);
+  if (!b || !next) return;
+  let best: Cell | null = null;
+  let bestDist = Infinity;
+  for (const cell of cells) {
+    const d = Math.hypot(cell.cx - b.cx, cell.cy - b.cy);
+    if (d < bestDist) {
+      bestDist = d;
+      best = cell;
+    }
+  }
+  // "same cell" = symbol centers closer than ~60% of the symbol size. Grid
+  // neighbors sit at least a full code apart (their quiet zones alone are 8
+  // modules), so drift matches but adjacent codes never do.
+  if (best && bestDist < 0.6 * Math.max(b.w, b.h)) {
+    best.roi = next;
+    best.cx = b.cx;
+    best.cy = b.cy;
+    best.miss = 0;
+    return;
+  }
+  if (cells.length < MAX_CELLS) {
+    if (cells.length === 0) void freezeFocus();
+    cells.push({ id: nextCellId++, roi: next, cx: b.cx, cy: b.cy, miss: 0 });
+  }
+}
+
 function spawnWorker(slot: number) {
   const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
   w.onmessage = (e: MessageEvent) => {
-    const { id, bytes, corners, ms, unsupported } = e.data as {
+    const { id, results, ms, unsupported } = e.data as {
       id: number;
-      bytes: Uint8Array | null;
-      corners: Pt[] | null;
+      results: { bytes: Uint8Array; corners: Pt[] | null }[];
       ms: number;
       unsupported?: boolean;
     };
@@ -156,28 +201,26 @@ function spawnWorker(slot: number) {
       // This browser hands out VideoFrames whose pixel format the worker
       // can't read — switch to the canvas path for good after a few.
       if (++vfUnsupported > 5) useVideoFrame = false;
+      drainPending();
       return;
     }
     if (ms > 0) emaDecMs = emaDecMs === 0 ? ms : emaDecMs * 0.9 + ms * 0.1;
-    if (bytes) {
-      missStreak = 0;
-      if (corners && crop && id > lastRoiHitId) {
-        lastRoiHitId = id;
-        const abs = corners.map((c) => ({ x: c.x + crop.ox, y: c.y + crop.oy }));
-        const next = roiFromCorners(abs, video.videoWidth, video.videoHeight);
-        if (next) {
-          if (!roi) void freezeFocus();
-          roi = next;
+    if (results.length > 0) {
+      for (const r of results) {
+        if (r.corners && crop) {
+          absorbPosition(r.corners.map((c) => ({ x: c.x + crop.ox, y: c.y + crop.oy })));
         }
+        onDecoded(r.bytes);
       }
-      onDecoded(bytes);
-    } else if (roi && ++missStreak >= MISS_LIMIT) {
-      // Lost the code (moved out of crop, refocus, sender restarted its
-      // layout) — back to full-frame acquisition.
-      roi = null;
-      missStreak = 0;
-      void unfreezeFocus();
+    } else if (crop && crop.cellId !== 0) {
+      // A cropped decode came back empty — that cell is going stale.
+      const cell = cells.find((c) => c.id === crop.cellId);
+      if (cell && ++cell.miss >= MISS_LIMIT) {
+        cells = cells.filter((c) => c !== cell);
+        if (cells.length === 0) void unfreezeFocus(); // back to acquisition
+      }
     }
+    drainPending(); // a slot just freed — service this tick's leftovers
   };
   // A crashed worker must not eat its slot forever — that would silently
   // halve decode throughput. Replace it and free the slot; the frame it was
@@ -249,17 +292,58 @@ function scheduleFrame(gen: number) {
 const grab = document.createElement("canvas");
 let frameId = 0;
 
+// Jobs this display frame still wants (null = full-frame sweep). A tick
+// wants one decode per tracked cell; when cells outnumber free workers the
+// remainder is drained as workers reply — the displayed frame stays on
+// screen for the whole tick, so a few-ms-late crop still sees it. Each new
+// tick replaces the queue: stale jobs for a gone frame are worthless.
+let pendingJobs: (Cell | null)[] = [];
+
+function drainPending() {
+  while (pendingJobs.length > 0) {
+    const job = pendingJobs[0]!;
+    if (!dispatchJob(job)) return; // pool saturated — resume on next reply
+    pendingJobs.shift();
+    if (job === null) lastSweep = performance.now();
+  }
+}
+
 function captureFrame() {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) return;
   captureTimes.push(performance.now());
+  if (cells.length === 0) {
+    pendingJobs = [];
+    dispatchJob(null); // acquisition: one permissive full-frame decode
+    return;
+  }
+  const wanted: (Cell | null)[] = [];
+  // While locked, periodically rescan the whole frame — a grid sender may
+  // have cells we haven't found yet (and it re-finds codes after drift).
+  if (performance.now() - lastSweep > SWEEP_MS) wanted.push(null);
+  // One cropped job per tracked cell; rotate the order so a scarce pool
+  // doesn't always postpone the same cell to the drain phase.
+  for (let i = 0; i < cells.length; i++) {
+    wanted.push(cells[(i + rotor) % cells.length]!);
+  }
+  rotor++;
+  pendingJobs = wanted;
+  drainPending();
+}
+
+/** Hand one decode job (a cell's crop, or a full frame when null) to a free
+ * worker. Returns false when the pool is saturated — dropped frames are
+ * just erasures the fountain absorbs. */
+function dispatchJob(cell: Cell | null): boolean {
   const slot = busy.indexOf(false);
-  if (slot === -1) return; // all workers busy — drop the frame, no harm done
-  const r = roi;
-  const opts = r ? undefined : ACQUIRE_OPTS; // locked → worker's fast defaults
+  if (slot === -1) return false;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const r = cell?.roi;
+  const opts = r ? undefined : ACQUIRE_OPTS; // locked crops → worker's fast defaults
   const id = frameId++;
-  crops.set(id, { ox: r?.x ?? 0, oy: r?.y ?? 0 });
+  crops.set(id, { ox: r?.x ?? 0, oy: r?.y ?? 0, cellId: cell?.id ?? 0 });
   busy[slot] = true;
   if (useVideoFrame) {
     try {
@@ -273,7 +357,7 @@ function captureFrame() {
         },
         [vf as unknown as Transferable],
       );
-      return;
+      return true;
     } catch {
       useVideoFrame = false; // constructor unsupported here — canvas from now on
     }
@@ -288,6 +372,7 @@ function captureFrame() {
   ctx.drawImage(video, r?.x ?? 0, r?.y ?? 0, cw, ch, 0, 0, cw, ch);
   const img = ctx.getImageData(0, 0, cw, ch);
   workers[slot]!.postMessage({ id, buf: img.data.buffer, w: cw, h: ch, opts }, [img.data.buffer]);
+  return true;
 }
 
 function onDecoded(bytes: Uint8Array) {
@@ -349,8 +434,9 @@ function updateStats() {
   metric("m-cap").textContent = (captureTimes.length / 2).toFixed(0);
   metric("m-dec").textContent = (decodeTimes.length / 2).toFixed(1);
   metric("m-decms").textContent = emaDecMs > 0 ? `${emaDecMs.toFixed(1)} ms` : "—";
-  metric("m-roi").textContent = roi
-    ? `${roi.w}×${roi.h}${useVideoFrame ? "" : " (canvas)"}`
+  const first = cells[0];
+  metric("m-roi").textContent = first
+    ? `${cells.length}× ${first.roi.w}×${first.roi.h}${useVideoFrame ? "" : " (canvas)"}`
     : `full${useVideoFrame ? "" : " (canvas)"}`;
   if (!decoder) return;
   const elapsed = (now - startTs) / 1000;
