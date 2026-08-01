@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["shared", "send", "receive", "bench", "kaleido", "tests"]
+  "include": ["shared", "send", "receive", "bench", "kaleido", "lib", "tests"]
 }

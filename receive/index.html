@@ -50,6 +50,20 @@
       </div>
     </details>
     <button id="start">Start camera</button>
+    <div class="hint">
+      or decode a recording:
+      <input id="cfg-video" type="file" accept="video/*" style="font: inherit; font-size: 12px; color: #ede5d4" />
+    </div>
+    <div id="locked" style="display: none; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center">
+      <input
+        id="key"
+        type="text"
+        placeholder="decryption key or passphrase"
+        autocomplete="off"
+        style="font: inherit; font-size: 13px; padding: 10px; border-radius: 8px; border: 1px solid #2e2718; background: #1b1712; color: #ede5d4; width: min(80vw, 420px)"
+      />
+      <button id="unlock" style="font-size: 14px; padding: 10px 22px">Unlock</button>
+    </div>
     <div class="metrics" id="metrics" style="display: none">
       <div class="metric"><div class="k">capture fps</div><div class="v" id="m-cap">—</div></div>
       <div class="metric"><div class="k">decode fps</div><div class="v amber" id="m-dec">—</div></div>

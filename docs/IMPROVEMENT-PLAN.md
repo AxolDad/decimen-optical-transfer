@@ -53,6 +53,28 @@ on the receiver, and the full-header stale-session guard (`sameStream`, finding 
 Headless E2E: a 122 KB text file crossed the loop as a 20 KB deflated envelope and the
 downloaded blob is byte-exact with its filename intact; the 2×2 grid run is unregressed.
 
+Phase 3B is implemented: `shared/crypto.ts` seals the envelope with AES-256-GCM above the
+fountain (`[FLAG_SEALED][salt][iv][ct+tag]`), so collection needs no key but all content —
+filename included — is ciphertext. Keys are a passphrase (PBKDF2-SHA-256, 600k) or a raw
+256-bit key; the receiver collects → locks → unlocks (before/during/after), and a wrong key
+fails GCM auth cleanly. The sender can mint a random key + display it as a QR for in-person
+handoff, and `exportVideo()` records a self-contained clip to publish anywhere. Verified
+end-to-end: a sealed file streamed over a canvas MediaStream locks, rejects a wrong key,
+and unlocks byte-exact; and the publish-anywhere path — export a clip, decode the recording
+from scratch — round-trips byte-exact and sealed.
+
+Phase 4 is implemented: the engine is now a library (`lib/`) — `OpticalSender` /
+`OpticalReceiver` classes plus `<optical-sender>` / `<optical-receiver>` Web Components —
+with the `/send/` and `/receive/` pages rewritten as thin consumers of it (still the
+reference UI and dev surface). `npm run build:lib` emits ESM + IIFE + `.d.ts`; `package.json`
+has the exports map and `files` allowlist. Embedding realities (iframe `allow="camera"`,
+CSP `wasm-unsafe-eval`, lazy ~940 KB receiver WASM, worker-chunk resolution) and an offline
+air-gap deployment (serve `dist/` from localhost) are documented in the README. The
+receiver accepts a caller-supplied `MediaStream` or a recorded `File`, so host apps own the
+camera UX and `onComplete` hands back raw bytes + metadata for saving. Browser E2E in
+`tests/e2e/` (5 checks, green) covers what node can't. Findings from the review are all
+addressed; the on-phone acceptance numbers remain the one thing needing real hardware.
+
 Side quest (see `docs/KALEIDOSCOPE.md`): a working loopback experiment at `/kaleido/`
 renders the same fountain stream as a spinning 8-color polar mandala — rotation-as-sync,
 per-frame calibration ring, FNV-discard integrity — with the fountain/protocol/envelope

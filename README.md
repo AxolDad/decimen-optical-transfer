@@ -122,12 +122,108 @@ The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
 handheld, ~186 KB/s propped.
 
+## Embedding it on your own site
+
+The engine ships as a library (`lib/`) with the `/send/` and `/receive/`
+pages as its reference UI. Two ways to embed:
+
+**Web Components** (no build step):
+
+```html
+<optical-sender id="tx" fps="30" codes="4"></optical-sender>
+<optical-receiver id="rx" autostart></optical-receiver>
+<script type="module">
+  import "decimen-optical-transfer"; // registers the elements
+  document.querySelector("#tx").send(myFile);            // a File or {bytes,name,mime}
+  document.querySelector("#rx").addEventListener("complete", (e) => {
+    const { name, mime, bytes } = e.detail;              // reconstructed file
+    // save it, preview it, hand it to your app…
+  });
+</script>
+```
+
+**The API directly** (bundler / framework):
+
+```ts
+import { OpticalSender, OpticalReceiver } from "decimen-optical-transfer";
+
+const sender = new OpticalSender({ canvas, payload: { bytes, name, mime },
+  codes: 4, encryptKey: "optional passphrase or 64-hex key" });
+await sender.start();
+
+const receiver = new OpticalReceiver({ video,      // your <video> element
+  onComplete: (file) => { /* file.bytes, file.name, file.mime */ } });
+await receiver.start();                              // opens the camera
+// receiver.start(aFile) instead decodes a recorded video, no camera
+```
+
+Everything is client-side — file bytes never touch a server, which is the
+whole point of embedding it. `onComplete` hands your app the raw bytes and
+metadata, so a wrapper (or a future desktop app) can write them straight to
+disk instead of offering a download.
+
+**Sealed streams** (`encryptKey` set): the payload is AES-256-GCM ciphertext
+end to end (see [Sealed streams](#sealed-streams-optical-broadcast) below).
+`sender.exportVideo()` records a self-contained clip you can host anywhere —
+the recording *is* the ciphertext container.
+
+**Embedding realities**, all documented so they don't surprise you:
+
+- Camera access needs a **secure context**; an `<iframe>` needs
+  `allow="camera"`.
+- The receiver loads a ~940 KB (403 KB gzipped) zxing **WASM** decoder,
+  lazily on start; strict-CSP hosts need `wasm-unsafe-eval`. The sender side
+  pulls in no WASM.
+- `npm run build:lib` emits an **ESM** build (`dist-lib/decimen-optical.js`,
+  ~11 KB gzipped + the worker chunks) for bundler/npm consumers and an
+  **IIFE** (`window.DecimenOptical`) for `<script>` use. The decode worker
+  and WASM are separate chunks the ESM resolves via `import.meta.url`.
+
+## Air-gap kit (fully offline)
+
+Because everything is local, the built demo *is* an offline transfer tool:
+copy the `dist/` folder onto the isolated machine once (USB stick, one-time
+QR bootstrap, however you like), serve it from `localhost` with any static
+server, and it never needs a network again — `localhost` is a secure
+context, so the camera works. The payload only ever travels as light; now
+the app doesn't travel over a network either. Combined with a sealed stream,
+you can move an encrypted file onto or off of an air-gapped box with nothing
+but two screens and a camera.
+
+## Sealed streams (optical broadcast)
+
+An optical channel is a broadcast: anyone with line of sight — or a copy of
+a screen recording — receives every frame. Sealed mode turns that into a
+feature. With a key set, the sender encrypts the payload (name, type, and
+bytes) with **AES-256-GCM** *above* the fountain layer, so:
+
+- frame headers stay public and **anyone can collect** a complete stream —
+  the receiver even verifies it by hash and reports "received, locked" — but
+  every content byte, including the filename, is ciphertext;
+- the key is entered on the receiver as a passphrase (PBKDF2-SHA-256,
+  600k iterations) or a raw 256-bit key, **before, during, or long after**
+  collection;
+- a wrong key fails GCM authentication cleanly ("wrong key"), never garbage;
+- `exportVideo()` writes the stream to a WebM you can upload anywhere — post
+  it publicly and only the key holder can ever open it.
+
+Two honest caveats, also in the code comments: encryption hides content, not
+*existence* (a QR video is obviously a data stream), and ciphertext posted
+publicly is exposed to offline guessing forever — so for anything published,
+prefer a generated random key over a human passphrase.
+
 ## Development
 
 ```bash
-npm test          # unit tests: fountain round-trips + cross-engine determinism goldens
-npm run build     # typecheck + production build
+npm test          # unit tests: fountain, protocol, envelope, crypto, geometry
+npm run build     # typecheck + production build (the demo pages)
+npm run build:lib # the embeddable library: ESM + IIFE + .d.ts types
 ```
+
+Browser end-to-end tests (sealed transfer, video export/decode) live in
+`tests/e2e/` and run against the built library through headless Chromium —
+see `tests/e2e/README.md`. They're separate from `npm test` because they
+need a browser and a preview server.
 
 The determinism goldens in `tests/` pin exact `dlog`/soliton/frame-index
 outputs — if a refactor or a JS engine shifts a single bit, they fail loudly

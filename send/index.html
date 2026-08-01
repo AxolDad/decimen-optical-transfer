@@ -77,6 +77,17 @@
           display size
           <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
         </label>
+        <label>
+          encryption
+          <select id="cfg-seal">
+            <option value="" selected>off</option>
+            <option value="sealed">sealed 🔒</option>
+          </select>
+        </label>
+        <label>
+          passphrase (blank = random key)
+          <input id="cfg-pass" type="text" autocomplete="off" />
+        </label>
       </div>
       <div class="hint" style="text-align: left; padding-top: 8px">
         Changes restart the stream — the receiver resets automatically (new
@@ -87,12 +98,21 @@
         modules — get closer or use a bigger display.
       </div>
     </details>
+    <div id="key-row" class="hint" style="display: none; align-items: center; gap: 10px; justify-content: center">
+      <span id="key-text" style="word-break: break-all; max-width: 460px"></span>
+      <canvas id="key-qr" width="16" height="16"></canvas>
+    </div>
     <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
+    <div>
+      <button id="export" style="display: none; font-size: 14px; padding: 8px 18px">Export video</button>
+      <span id="export-out" class="hint"></span>
+    </div>
     <div class="hint">
       Max screen brightness helps. The stream loops forever — stop when the
       receiver says done. Drop any file anywhere on this page to send it;
       name and type travel inside the stream, and compressible files are
-      deflated on the fly.
+      deflated on the fly. Sealed streams are ciphertext end to end — export
+      one as a video and host it anywhere; only the key opens it.
     </div>
     <script type="module" src="./main.ts"></script>
   </body>
