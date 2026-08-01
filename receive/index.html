@@ -33,22 +33,28 @@
         <label>
           decode workers
           <select id="cfg-workers">
+            <option selected value="auto">auto</option>
             <option>1</option>
-            <option selected>2</option>
+            <option>2</option>
             <option>3</option>
+            <option>4</option>
           </select>
         </label>
       </div>
       <div class="hint" style="text-align: left; padding-top: 8px">
         Set before starting the camera. 1280-wide is the widest mode iOS runs
         at a true 60 fps; the fps request is demanded with `exact` first
-        because `ideal: 60` silently delivers 30.
+        because `ideal: 60` silently delivers 30. Workers "auto" = CPU cores
+        − 1, capped at 4. After the first decode the pipeline crops to the
+        code's neighborhood (the "roi" metric) — decode gets ~3× faster.
       </div>
     </details>
     <button id="start">Start camera</button>
     <div class="metrics" id="metrics" style="display: none">
       <div class="metric"><div class="k">capture fps</div><div class="v" id="m-cap">—</div></div>
       <div class="metric"><div class="k">decode fps</div><div class="v amber" id="m-dec">—</div></div>
+      <div class="metric"><div class="k">decode ms</div><div class="v" id="m-decms">—</div></div>
+      <div class="metric"><div class="k">roi crop</div><div class="v" id="m-roi">—</div></div>
       <div class="metric"><div class="k">goodput</div><div class="v amber" id="m-rate">—</div></div>
       <div class="metric"><div class="k">elapsed</div><div class="v" id="m-time">—</div></div>
       <div class="metric"><div class="k">frames new/dup</div><div class="v" id="m-frames">—</div></div>

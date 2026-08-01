@@ -99,7 +99,17 @@ Both pages have a collapsed **Settings** panel. On the sender: payload size
 (512 KB or 2 MB), tx fps, bytes per frame, error-correction level, and
 display size. Changing anything restarts the stream, and the receiver resets
 automatically off the new session id. On the receiver: capture width,
-capture fps, and decode worker count, applied when the camera starts.
+capture fps, and decode worker count (default "auto" = CPU cores − 1, capped
+at 4), applied when the camera starts.
+
+The receiver decodes in two modes: full-frame **acquisition** until the first
+code lands, then **locked** — frames are cropped to the code's last position
+(the "roi crop" metric; ~3× faster decode) and, where the browser supports
+it, pixels travel as transferred `VideoFrame`s with the luma plane extracted
+inside the worker, so the main thread never copies a frame. A run of misses
+falls back to acquisition automatically. On platforms that expose manual
+focus (Chromium/Android), autofocus is frozen once locked — hunting AF is
+the #1 throughput killer.
 
 | setting | default | notes |
 |---|---|---|

@@ -25,6 +25,14 @@ for the parent experiment with the same tricks.
 CI/Pages workflow; tuned reader options, worker crash recovery, teardown paths, size-cap
 guards, 30 fps default). Findings #1, #2, #6, #7, #10 from the review table are fixed.
 
+Phase 1 is implemented: ROI tracking with acquire/locked reader modes (`receive/roi.ts`,
+unit-tested), zero-readback VideoFrame capture path with in-worker Y-plane extraction and
+automatic canvas fallback, adaptive worker pool (auto = cores−1, cap 4), decode-ms/ROI
+metrics, and focus freeze-on-lock where the platform supports it (finding #3 fixed).
+Verified end-to-end headless: synthetic I420 camera frames → rVFC → workers → ROI lock →
+fountain completion, hash verified. The on-phone acceptance check (decode fps ≥ capture
+fps at 1280-wide) still needs real hardware.
+
 ---
 
 ## Part 1 — Code review
