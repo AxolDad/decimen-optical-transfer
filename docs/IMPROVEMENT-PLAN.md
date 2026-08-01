@@ -21,6 +21,10 @@ Realistic end state after Phases 1–2 on current-gen hardware: **~100–150 KB/
 (vs ~25–30 KB/s at today's defaults) — consistent with the 128–186 KB/s the README reports
 for the parent experiment with the same tricks.
 
+**Status:** Phase 0 and the quick wins are implemented (tests + `/bench/` loopback page +
+CI/Pages workflow; tuned reader options, worker crash recovery, teardown paths, size-cap
+guards, 30 fps default). Findings #1, #2, #6, #7, #10 from the review table are fixed.
+
 ---
 
 ## Part 1 — Code review

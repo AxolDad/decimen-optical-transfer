@@ -16,6 +16,7 @@ export default defineConfig({
         index: resolve(__dirname, "index.html"),
         send: resolve(__dirname, "send/index.html"),
         receive: resolve(__dirname, "receive/index.html"),
+        bench: resolve(__dirname, "bench/index.html"),
       },
     },
   },

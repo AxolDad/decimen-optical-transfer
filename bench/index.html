@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Optical Transfer — bench</title>
+    <link rel="stylesheet" href="../shared/style.css" />
+  </head>
+  <body>
+    <h1>DECIMEN <small>— Loopback Bench (no camera)</small></h1>
+    <div class="hint">
+      Runs the real encode → QR → zxing-worker → fountain pipeline against
+      synthetic frames, on this device's CPU. Use it to A/B decoder settings
+      and measure decode-bound goodput without holding a phone at a screen.
+    </div>
+    <details class="settings" open>
+      <summary>Configuration</summary>
+      <div class="row">
+        <label>
+          payload
+          <select id="cfg-payload">
+            <option value="131072">128 KB</option>
+            <option value="524288" selected>512 KB</option>
+            <option value="2097152">2 MB</option>
+          </select>
+        </label>
+        <label>
+          bytes / frame
+          <select id="cfg-bytes">
+            <option>500</option>
+            <option>1000</option>
+            <option selected>1465</option>
+            <option>1850</option>
+            <option>2331</option>
+            <option>2953</option>
+          </select>
+        </label>
+        <label>
+          error correction
+          <select id="cfg-ecc">
+            <option selected>L</option>
+            <option>M</option>
+            <option>Q</option>
+            <option>H</option>
+          </select>
+        </label>
+        <label>
+          px / module
+          <select id="cfg-scale">
+            <option>2</option>
+            <option selected>3</option>
+            <option>4</option>
+            <option>6</option>
+          </select>
+        </label>
+        <label>
+          frame
+          <select id="cfg-frame">
+            <option value="0" selected>tight crop</option>
+            <option value="1280">1280×960</option>
+            <option value="1920">1920×1080</option>
+          </select>
+        </label>
+        <label>
+          blur radius
+          <select id="cfg-blur">
+            <option selected>0</option>
+            <option>1</option>
+            <option>2</option>
+          </select>
+        </label>
+        <label>
+          frame loss
+          <select id="cfg-loss">
+            <option value="0" selected>0%</option>
+            <option value="0.1">10%</option>
+            <option value="0.3">30%</option>
+            <option value="0.5">50%</option>
+          </select>
+        </label>
+        <label>
+          decode workers
+          <select id="cfg-workers">
+            <option>1</option>
+            <option selected>2</option>
+            <option>4</option>
+            <option>8</option>
+          </select>
+        </label>
+        <label>
+          reader options
+          <select id="cfg-opts">
+            <option value="tuned" selected>tuned (fast)</option>
+            <option value="defaults">zxing defaults</option>
+          </select>
+        </label>
+      </div>
+      <div class="hint" style="text-align: left; padding-top: 8px">
+        "tight crop" measures pure decode cost (≈ a future ROI-cropped
+        receiver); the big frames reproduce today's full-capture decode.
+        Frame synthesis runs on the main thread, so with many fast workers
+        the pipeline can be generation-bound — the report says when it was.
+      </div>
+    </details>
+    <button id="run">Run</button>
+    <div class="hint" id="status">idle</div>
+    <div class="progress" id="progress" style="display: none"><div id="bar"></div></div>
+    <pre id="log" style="text-align: left; font-size: 12px; overflow-x: auto"></pre>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -11,7 +11,10 @@
 import { LTDecoder } from "../shared/fountain";
 import { fnv1a, parseFrame } from "../shared/protocol";
 
-const OVERHEAD_EST = 1.18; // expected frames ≈ K × this (robust-soliton ε)
+// Expected frames ≈ K × this (robust-soliton ε). Measured in the test suite:
+// 1.11–1.28 depending on K (small K trends worse); 1.18 is a mid estimate
+// used only for the progress bar and the goodput readout.
+const OVERHEAD_EST = 1.18;
 
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const video = document.getElementById("video") as HTMLVideoElement;
@@ -30,6 +33,8 @@ let sessionId = 0;
 let startTs = 0;
 let captureGen = 0;
 let done = false;
+let statsTimer = 0;
+let wakeLock: { release(): Promise<void> } | null = null;
 
 const workers: Worker[] = [];
 const busy: boolean[] = [];
@@ -79,28 +84,40 @@ async function start() {
   await video.play().catch(() => undefined);
   stats.textContent = `camera ${stream.getVideoTracks()[0]?.getSettings().width}×${stream.getVideoTracks()[0]?.getSettings().height}@${stream.getVideoTracks()[0]?.getSettings().frameRate} — searching for a stream…`;
 
-  for (let i = 0; i < workerCount; i++) {
-    const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-    const slot = i;
-    w.onmessage = (e: MessageEvent) => {
-      const { id, bytes } = e.data as { id: number; bytes: Uint8Array | null };
-      if (id === -1) return; // warm-up
-      busy[slot] = false;
-      if (bytes) onDecoded(bytes);
-    };
-    workers.push(w);
-    busy.push(false);
-  }
+  for (let i = 0; i < workerCount; i++) spawnWorker(i);
 
   captureGen++;
   scheduleFrame(captureGen);
-  setInterval(updateStats, 500);
+  statsTimer = window.setInterval(updateStats, 500);
   try {
-    await (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<unknown> } })
-      .wakeLock?.request("screen");
+    wakeLock =
+      ((await (
+        navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<unknown> } }
+      ).wakeLock?.request("screen")) as { release(): Promise<void> } | undefined) ?? null;
   } catch {
     /* fine */
   }
+}
+
+function spawnWorker(slot: number) {
+  const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+  w.onmessage = (e: MessageEvent) => {
+    const { id, bytes } = e.data as { id: number; bytes: Uint8Array | null };
+    if (id === -1) return; // warm-up
+    busy[slot] = false;
+    if (bytes) onDecoded(bytes);
+  };
+  // A crashed worker must not eat its slot forever — that would silently
+  // halve decode throughput. Replace it and free the slot; the frame it was
+  // holding is just another erasure the fountain absorbs.
+  const revive = () => {
+    w.terminate();
+    if (!done) spawnWorker(slot);
+  };
+  w.onerror = revive;
+  w.onmessageerror = revive;
+  workers[slot] = w;
+  busy[slot] = false;
 }
 
 type VideoRVFC = HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
@@ -166,7 +183,12 @@ function onDecoded(bytes: Uint8Array) {
 function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen: number) {
   done = true;
   captureGen++;
+  clearInterval(statsTimer);
+  for (const w of workers) w.terminate();
+  workers.length = 0;
   stream?.getTracks().forEach((t) => t.stop());
+  void wakeLock?.release().catch(() => undefined);
+  wakeLock = null;
   preview.style.display = "none";
   bar.style.width = "100%";
   const kb = Math.round(totalLen / 1024);
@@ -177,7 +199,9 @@ function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen:
   heading.textContent = "Transfer Complete!";
   const img = document.createElement("img");
   img.className = "received";
-  img.src = URL.createObjectURL(new Blob([payload as BlobPart], { type: "image/png" }));
+  const url = URL.createObjectURL(new Blob([payload as BlobPart], { type: "image/png" }));
+  img.onload = () => URL.revokeObjectURL(url);
+  img.src = url;
   result.append(heading, img);
 }
 

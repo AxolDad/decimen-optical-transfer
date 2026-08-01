@@ -60,8 +60,8 @@ blocks directly. Each frame is the XOR of a pseudorandom *subset* of blocks;
 the subset is derived deterministically from the frame's sequence number,
 with subset sizes drawn from a robust-soliton distribution ([Luby transform
 coding](https://en.wikipedia.org/wiki/Luby_transform_code)). The receiver
-collects **any** ~K·1.15 distinct frames, in any order, and peels the file
-out of them. Dropped frames cost a little time, never correctness. Sender
+collects **any** ~K·1.2 distinct frames (measured 1.11–1.28; small K trends
+worse), in any order, and peels the file out of them. Dropped frames cost a little time, never correctness. Sender
 and receiver frame rates don't need to match at all.
 
 **Every frame is self-describing.** A 20-byte header carries the session id,
@@ -103,12 +103,30 @@ capture fps, and decode worker count, applied when the camera starts.
 
 | setting | default | notes |
 |---|---|---|
-| tx fps | 24 | each frame must own at least 2 refresh cycles of the display |
+| tx fps | 30 | each frame must own at least 2 refresh cycles of the display; 30 is exactly 2 on a 60 Hz screen (24 alternates 2/3 and invites straddled captures) — drop to 24/20 if your capture struggles |
 | bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2953 (v40) works phone-to-phone at close range |
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
 handheld, ~186 KB/s propped.
+
+## Development
+
+```bash
+npm test          # unit tests: fountain round-trips + cross-engine determinism goldens
+npm run build     # typecheck + production build
+```
+
+The determinism goldens in `tests/` pin exact `dlog`/soliton/frame-index
+outputs — if a refactor or a JS engine shifts a single bit, they fail loudly
+instead of letting sender and receiver silently desynchronize.
+
+`/bench/` is a camera-free loopback: the real encode → QR → zxing-worker →
+fountain pipeline against synthetic frames, with knobs for module size,
+frame size, blur, loss, worker count, and reader options. Open it on the
+actual receiving device to measure that device's decode ceiling and to A/B
+tuning changes. (See `docs/IMPROVEMENT-PLAN.md` for the roadmap this
+supports.)
 
 ## Similar projects
 

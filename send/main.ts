@@ -68,7 +68,14 @@ async function startStream() {
 
   const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
   const blockLen = frameBytes - HEADER_LEN;
-  const encoder = new LTEncoder(payload, blockLen, sessionId);
+  let encoder: LTEncoder;
+  try {
+    encoder = new LTEncoder(payload, blockLen, sessionId);
+  } catch (err) {
+    // e.g. payload past the header's u16 block-count cap (~192 MB at v40)
+    specs.textContent = `✗ ${err instanceof Error ? err.message : String(err)}`;
+    return;
+  }
   const header: FrameHeader = {
     sessionId,
     seq: 0,
