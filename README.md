@@ -6,6 +6,11 @@ device points its camera at it and reconstructs the file. **No network path
 between the devices, no app, no pairing, no permissions beyond the camera.**
 The payload travels as light.
 
+> **YouTube as a dead drop.** Encrypt a file, post it anywhere as a stream of
+> animated light, and only the key holder can ever open it — no network, no
+> account, no trace of what it is. See
+> [Sealed streams](#sealed-streams-optical-broadcast).
+
 This is a minimal proof of concept extracted from a larger
 experiment that reached **128 KB/s phone-to-phone** with denser frames,
 multi-code grids, and an error-corrected color channel. This PoC keeps only
