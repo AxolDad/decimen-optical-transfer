@@ -12,6 +12,51 @@ const GEN_WORKERS = 2;
 const QUEUE_DEPTH = 4;
 const BATCH_PER_WORKER = 2;
 
+export interface ExportOptions {
+  /** Fountain redundancy: record K × this many frames. Higher survives more
+   * codec-mangled frames. Default 1.5; the YouTube preset uses ~2.4. */
+  overhead?: number;
+  /** Upscale the recording to this pixel height (nearest-neighbor, so
+   * modules stay crisp). 2160 makes YouTube allocate a 4K bitrate to what
+   * are really big blocky modules — the known "upload as 4K" trick. 0 keeps
+   * the canvas size. */
+  targetHeight?: number;
+  /** Container frame rate. Fixed (default 30) so a slow code rate means each
+   * code spans videoFps/codeRate frames and survives temporal compression. */
+  videoFps?: number;
+  /** Recording bitrate hint. */
+  bitsPerSecond?: number;
+}
+
+export interface ExportPlan {
+  seconds: number;
+  overhead: number;
+  videoFps: number;
+  targetHeight: number;
+  framesPerCode: number; // how many video frames each code survives across
+}
+
+/** Pure export-parameter math (unit-tested). `codeRate` is codes shown per
+ * second (the vsync-paced fps); `codes` is codes per displayed frame. */
+export function exportPlan(
+  k: number,
+  codes: number,
+  codeRate: number,
+  opts: ExportOptions = {},
+): ExportPlan {
+  const overhead = opts.overhead ?? 1.5;
+  const videoFps = opts.videoFps ?? 30;
+  const targetHeight = opts.targetHeight ?? 0;
+  const seconds = Math.ceil((k * overhead) / codes / codeRate) + 1;
+  return {
+    seconds,
+    overhead,
+    videoFps,
+    targetHeight,
+    framesPerCode: Math.max(1, Math.round(videoFps / codeRate)),
+  };
+}
+
 export interface SenderPayload {
   bytes: Uint8Array;
   name: string;
@@ -251,17 +296,45 @@ export class OpticalSender {
 
   /** Record the live stream into a standalone video (host it anywhere — the
    * video IS the ciphertext container when sealed). Captures enough frames
-   * for a receiver to reconstruct from the recording alone: K × overhead. */
-  async exportVideo(overhead = 1.5): Promise<Blob> {
+   * for a receiver to reconstruct from the recording alone: K × overhead.
+   *
+   * For a codec-hostile host (YouTube), pass a big targetHeight and a high
+   * overhead: modules get recorded large, and the fountain carries enough
+   * redundancy that transcode-mangled frames are just erasures. The video
+   * is recorded at a FIXED videoFps regardless of code rate, so a slow code
+   * rate means each code persists across several frames. */
+  async exportVideo(opts: ExportOptions = {}): Promise<Blob> {
     if (!this.info) throw new Error("start() first — export needs a running stream");
-    const seconds = Math.ceil(((this.k * overhead) / this.codes / this.fps) * 10) / 10 + 1;
-    const stream = this.opts.canvas.captureStream(this.fps);
+    const plan = exportPlan(this.k, this.codes, this.fps, opts);
+    const videoFps = plan.videoFps;
+
+    // Optionally upscale the live canvas into an offscreen recording surface —
+    // decouples output resolution from the on-screen display size.
+    const src = this.opts.canvas;
+    let recordCanvas = src;
+    let upscaleRAF = 0;
+    if (plan.targetHeight && plan.targetHeight > src.height) {
+      const scale = Math.max(1, Math.round(plan.targetHeight / src.height));
+      const off = document.createElement("canvas");
+      off.width = src.width * scale;
+      off.height = src.height * scale;
+      const octx = off.getContext("2d")!;
+      octx.imageSmoothingEnabled = false; // crisp modules, no blur
+      const paint = () => {
+        octx.drawImage(src, 0, 0, off.width, off.height);
+        upscaleRAF = requestAnimationFrame(paint);
+      };
+      paint();
+      recordCanvas = off;
+    }
+
+    const stream = recordCanvas.captureStream(videoFps);
     const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((m) =>
       MediaRecorder.isTypeSupported(m),
     );
     const rec = new MediaRecorder(stream, {
       mimeType: mime,
-      videoBitsPerSecond: 12_000_000, // generous — sharp modules survive
+      videoBitsPerSecond: opts.bitsPerSecond ?? 12_000_000,
     });
     const chunks: Blob[] = [];
     rec.ondataavailable = (e) => {
@@ -272,14 +345,15 @@ export class OpticalSender {
       rec.onerror = () => reject(new Error("recording failed"));
     });
     rec.start(1000);
-    await new Promise((r) => setTimeout(r, seconds * 1000));
+    await new Promise((r) => setTimeout(r, plan.seconds * 1000));
     rec.stop();
     stream.getTracks().forEach((t) => t.stop());
+    if (upscaleRAF) cancelAnimationFrame(upscaleRAF);
     return done;
   }
 
-  /** Export duration for the current stream at `overhead`, in seconds. */
-  exportSeconds(overhead = 1.5): number {
-    return this.info ? Math.ceil((this.k * overhead) / this.codes / this.fps) + 1 : 0;
+  /** Planned export for the current stream (duration, resolution, redundancy). */
+  exportPlan(opts: ExportOptions = {}): ExportPlan {
+    return exportPlan(this.k, this.codes, this.fps, opts);
   }
 }

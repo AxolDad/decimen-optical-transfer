@@ -4,8 +4,15 @@
 // drop, the key display, and the export button.
 
 import QRCode from "qrcode";
-import { OpticalSender, type SenderPayload } from "../lib/sender";
+import { OpticalSender, type ExportOptions, type SenderPayload } from "../lib/sender";
 import { randomKeyHex } from "../shared/crypto";
+
+// The "Encrypt for YouTube" robustness recipe: big modules (low density),
+// slow code rate (each code spans several video frames), high in-frame ECC,
+// single code, sealed, recorded at 4K with heavy fountain redundancy — so a
+// lossy transcode's damage is absorbed by ECC + the fountain, not the file.
+const YT_PRESET = { fps: 8, bytes: 500, codes: 1, ecc: "Q" as const, size: 1200 };
+const YT_EXPORT: ExportOptions = { overhead: 2.4, targetHeight: 2160, videoFps: 30, bitsPerSecond: 16_000_000 };
 
 const canvas = document.getElementById("qr") as HTMLCanvasElement;
 const specs = document.getElementById("specs")!;
@@ -13,6 +20,7 @@ const keyRow = document.getElementById("key-row")!;
 const keyText = document.getElementById("key-text")!;
 const keyQr = document.getElementById("key-qr") as HTMLCanvasElement;
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
+const ytBtn = document.getElementById("yt") as HTMLButtonElement;
 const exportOut = document.getElementById("export-out")!;
 const cfgPreset = document.getElementById("cfg-preset") as HTMLSelectElement;
 const cfgFile = document.getElementById("cfg-file") as HTMLInputElement;
@@ -39,6 +47,7 @@ let customFile: SenderPayload | null = null;
 const CUSTOM = "__custom__";
 let sender: OpticalSender | null = null;
 let generation = 0;
+let pendingYtExport = false;
 
 async function loadPayload(url: string): Promise<Uint8Array | null> {
   const hit = payloadCache.get(url);
@@ -116,8 +125,13 @@ async function startStream() {
         `${info.fps.toFixed(info.fps % 1 ? 1 : 0)} fps (${info.ticks}v @ ${info.refreshHz} Hz) · ` +
         `${info.codes}× ${info.frameBytes} B · V${info.version} · ECC ${info.ecc} · ` +
         `K=${info.k} · raw ${info.rawKBs.toFixed(0)} KB/s · ≈${info.estSeconds}s`;
-      exportBtn.textContent = `Export video (~${sender!.exportSeconds()}s)`;
+      exportBtn.textContent = `Export video (~${sender!.exportPlan().seconds}s)`;
       exportBtn.style.display = "inline-block";
+      ytBtn.style.display = "inline-block";
+      if (pendingYtExport) {
+        pendingYtExport = false;
+        void exportVideo(YT_EXPORT, "decimen-youtube.webm");
+      }
     },
     onError: (message) => {
       if (gen === generation) specs.textContent = `✗ ${message}`;
@@ -131,24 +145,36 @@ async function startStream() {
   await sender.start();
 }
 
-async function exportVideo() {
+async function exportVideo(opts: ExportOptions = {}, filename = "decimen-stream.webm") {
   if (!sender) return;
   exportBtn.disabled = true;
-  const secs = sender.exportSeconds();
-  exportOut.textContent = `recording ~${secs}s of stream…`;
+  ytBtn.disabled = true;
+  const plan = sender.exportPlan(opts);
+  const res = plan.targetHeight ? ` at ${plan.targetHeight}p` : "";
+  exportOut.textContent = `recording ~${plan.seconds}s${res} (${plan.framesPerCode} frames/code)…`;
   try {
-    const blob = await sender.exportVideo();
+    const blob = await sender.exportVideo(opts);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "decimen-stream.webm";
-    a.textContent = `Download recording (${(blob.size / 1024 / 1024).toFixed(1)} MB)`;
+    a.download = filename;
+    a.textContent = `Download ${filename} (${(blob.size / 1024 / 1024).toFixed(1)} MB)`;
     a.className = "download";
     exportOut.textContent = "";
     exportOut.append(a);
+    if (filename.includes("youtube")) {
+      const tip = document.createElement("div");
+      tip.className = "hint";
+      tip.style.paddingTop = "6px";
+      tip.textContent =
+        "Upload at full resolution (don't let anything down-res it). Keep the key safe and separate — " +
+        "without it the video is unrecoverable; with it, anyone who finds the video can open it.";
+      exportOut.append(tip);
+    }
   } catch (err) {
     exportOut.textContent = `✗ ${err instanceof Error ? err.message : String(err)}`;
   }
   exportBtn.disabled = false;
+  ytBtn.disabled = false;
 }
 
 function main() {
@@ -186,6 +212,22 @@ function main() {
     });
   }
   exportBtn.addEventListener("click", () => void exportVideo());
+  ytBtn.addEventListener("click", () => {
+    // One click: apply the robustness recipe, force a sealed stream, and
+    // export once it's running. The onReady handler fires the export.
+    cfgPreset.value = "";
+    cfgFps.value = String(YT_PRESET.fps);
+    cfgBytes.value = String(YT_PRESET.bytes);
+    cfgGrid.value = String(YT_PRESET.codes);
+    cfgEcc.value = YT_PRESET.ecc;
+    cfgSize.value = String(YT_PRESET.size);
+    // A public upload must never be protected by a guessable passphrase —
+    // clear the field so this stream is always sealed with a random key.
+    cfgPass.value = "";
+    cfgSeal.value = "sealed";
+    pendingYtExport = true;
+    void startStream();
+  });
   void startStream();
   void (async () => {
     try {

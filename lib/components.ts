@@ -3,7 +3,7 @@
 // call or two, CustomEvents out. See README "Embedding".
 
 import { OpticalReceiver, type ReceivedFile, type ReceiverStats } from "./receiver";
-import { OpticalSender, type SenderInfo, type SenderPayload } from "./sender";
+import { OpticalSender, type ExportOptions, type SenderInfo, type SenderPayload } from "./sender";
 import { randomKeyHex } from "../shared/crypto";
 
 const num = (el: HTMLElement, name: string) => {
@@ -50,9 +50,9 @@ export class OpticalSenderElement extends HTMLElement {
     await this.sender.start();
   }
 
-  exportVideo(overhead?: number): Promise<Blob> {
+  exportVideo(opts?: ExportOptions): Promise<Blob> {
     if (!this.sender) return Promise.reject(new Error("send() first"));
-    return this.sender.exportVideo(overhead);
+    return this.sender.exportVideo(opts);
   }
 
   stop() {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { estimateRefresh, vsyncPacing } from "../send/pacing";
 import { GAP, MARGIN, gridLayout } from "../send/layout";
+import { exportPlan } from "../lib/sender";
 
 describe("vsyncPacing", () => {
   it("maps targets to exact refresh divisions", () => {
@@ -56,6 +57,38 @@ describe("estimateRefresh", () => {
   it("falls back to 60 without enough clean samples", () => {
     expect(estimateRefresh([])).toBe(60);
     expect(estimateRefresh([0, 300, 700, 1200])).toBe(60); // all throttled
+  });
+});
+
+describe("exportPlan", () => {
+  it("sizes a default recording at K×1.5, one video frame per code by default", () => {
+    // 100 codes, single code/frame, 30 code/s → ceil(150/30)+1 = 6s
+    const p = exportPlan(100, 1, 30);
+    expect(p).toMatchObject({ overhead: 1.5, videoFps: 30, targetHeight: 0, seconds: 6 });
+    expect(p.framesPerCode).toBe(1);
+  });
+
+  it("holds each code across several frames at a slow code rate", () => {
+    // the YouTube recipe: 8 codes/s recorded at 30 fps → ~4 frames per code
+    const p = exportPlan(600, 1, 8, { overhead: 2.4, targetHeight: 2160, videoFps: 30 });
+    expect(p.framesPerCode).toBe(4); // round(30/8)
+    expect(p.targetHeight).toBe(2160);
+    expect(p.overhead).toBe(2.4);
+    // ceil(600×2.4 / 1 / 8) + 1 = ceil(180)+1 = 181s
+    expect(p.seconds).toBe(181);
+  });
+
+  it("divides duration across a grid's codes-per-frame", () => {
+    // 4 codes/frame halves the frames needed vs a single code
+    const one = exportPlan(400, 1, 30, { overhead: 2 });
+    const grid = exportPlan(400, 4, 30, { overhead: 2 });
+    expect(grid.seconds).toBeLessThan(one.seconds);
+    expect(grid.seconds).toBe(Math.ceil((400 * 2) / 4 / 30) + 1);
+  });
+
+  it("never reports fewer than one frame per code", () => {
+    // code rate above video fps still can't sub-divide a frame
+    expect(exportPlan(10, 1, 60, { videoFps: 30 }).framesPerCode).toBe(1);
   });
 });
 

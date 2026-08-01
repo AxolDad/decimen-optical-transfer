@@ -7,8 +7,14 @@
 // <optical-receiver> custom elements (idempotent), so a single script tag
 // is a complete integration.
 
-export { OpticalSender } from "./sender";
-export type { SenderInfo, SenderOptions, SenderPayload } from "./sender";
+export { OpticalSender, exportPlan } from "./sender";
+export type {
+  SenderInfo,
+  SenderOptions,
+  SenderPayload,
+  ExportOptions,
+  ExportPlan,
+} from "./sender";
 export { OpticalReceiver } from "./receiver";
 export type { ReceivedFile, ReceiverOptions, ReceiverStats } from "./receiver";
 export { OpticalSenderElement, OpticalReceiverElement, defineElements } from "./components";
