@@ -1,7 +1,9 @@
 # Review & Improvement Plan
 
-**Goals:** raise throughput (frame rate × data per frame), support arbitrary files, and make
-the whole thing embeddable in any website as a reusable component.
+**Goals:** raise throughput (frame rate × data per frame), support arbitrary files, make
+the whole thing embeddable in any website as a reusable component, and add a sealed mode:
+end-to-end-encrypted streams that can be recorded and published anywhere (even YouTube)
+yet opened only by whoever holds the key.
 
 **TL;DR of the plan**
 
@@ -11,7 +13,8 @@ the whole thing embeddable in any website as a reusable component.
 | 1 | Receiver decode speed | Decode keeps up with capture; denser frames become viable (2×) |
 | 2 | Sender density + pacing | Multi-code grid + vsync pacing (3–5× raw channel rate) |
 | 3 | Arbitrary files, protocol v2 | Drag-drop any file; name/type preserved; optional compression |
-| 4 | Embeddable library + hosted demo | `npm install` / `<script>` embed on any site; live Pages demo |
+| 3B | Sealed streams + broadcast mode | AES-GCM-encrypted streams; record once, host anywhere (even YouTube) — only key holders can open it |
+| 4 | Embeddable library + hosted demo | `npm install` / `<script>` embed on any site; live Pages demo; offline air-gap kit |
 | 5 | Color channel (stretch) | RGB multiplexing toward 3× on top of Phase 2 |
 
 Realistic end state after Phases 1–2 on current-gen hardware: **~100–150 KB/s propped**
@@ -196,8 +199,9 @@ hardware; bench page shows the grid path decode-bound, not sender-bound.
    the envelope. Metadata rides inside the fountain payload, so it needs no new frame types
    and arrives with the same erasure protection as the data.
 2. **Header v2 (21 bytes)**: bump magic (`0xD1 0x0D`), add a version/flags byte
-   (bit 0: envelope present, bit 1: deflate). Also fold `k`/`totalLen` into the stale-
-   session guard (review #8). No back-compat constraints — this is still a PoC.
+   (bit 0: envelope present, bit 1: deflate, bit 2: encrypted — see Phase 3B). Also fold
+   `k`/`totalLen` into the stale-session guard (review #8). No back-compat constraints —
+   this is still a PoC.
 3. **Optional DEFLATE** via `CompressionStream('deflate-raw')` (evergreen browsers since
    ~2023, feature-detected, flag bit): free multi-× win for text/CSV/JSON/office docs; PNGs
    and zips pass through unchanged.
@@ -210,6 +214,57 @@ hardware; bench page shows the grid path decode-bound, not sender-bound.
 
 *Acceptance:* any file round-trips with name/type intact, hash-verified; a compressible file
 measurably beats its raw transfer time; nothing regresses for the demo images.
+
+### Phase 3B — Sealed streams + broadcast mode (encrypt the light, publish anywhere)
+
+The optical channel is a broadcast: anyone with line of sight — or a copy of a screen
+recording — receives everything. This phase makes that a *feature*: encrypt the payload end
+to end so the stream itself can be public (screen-recorded, re-hosted, even uploaded to
+YouTube) while remaining opaque to everyone but the key holder. The receiver holds the key;
+the channel holds only ciphertext.
+
+1. **End-to-end encryption above the fountain layer.** Encrypt the Phase 3 envelope
+   (filename + MIME + bytes, after optional compression — compress-then-encrypt, ciphertext
+   doesn't compress) with **AES-256-GCM via WebCrypto**, then fountain-code the ciphertext.
+   This layering is the crux: frame headers (`seq`, `k`, `blockLen`, session) stay plaintext
+   so *collection* works without the key — the fountain math needs no secrets — while every
+   content byte, including the filename, is ciphertext. Wire layout under flag bit 2:
+   `[salt 16 B][iv 12 B][ciphertext + GCM tag]`. One fresh key/salt/IV per transfer; GCM's
+   auth tag supplies cryptographic integrity and (within the key-sharing group) authenticity.
+2. **Keys on the receiver side.** A key field in the receiver app, accepted three ways:
+   a passphrase (PBKDF2-SHA-256, ~600k iterations, per-transfer random salt), a raw 256-bit
+   key (hex/base64), or — fitting for this project — **scanning a key QR** the sender
+   generates for an in-person, out-of-band handoff. The sender can mint a random key and
+   display it once; the stream published later is useless without it.
+3. **Collect now, unlock later.** Keep the FNV check over the *ciphertext*: the receiver can
+   verify a complete, intact collection with no key at all and report "stream received —
+   locked". The key can be entered before, during, or long after collection; a wrong key
+   fails GCM authentication and reports cleanly ("wrong key"), never garbage output.
+4. **Sender: export-as-video.** A finite recording must carry enough distinct frames:
+   ≥ K × ~1.3 to absorb codec-mangled frames. Add an export mode that computes the required
+   duration for the chosen preset and renders it frame-exact via WebCodecs `VideoEncoder`
+   (faster than realtime, no dropped frames), with `canvas.captureStream` + MediaRecorder as
+   the fallback. Output: a WebM/MP4 you can post anywhere — the video *is* the ciphertext
+   container.
+5. **Receiver: decode from a video, not just a camera.** Drag an .mp4/.webm into the
+   receiver (or point it at a playing video element) and run the exact same rVFC → worker →
+   fountain pipeline against file playback instead of `getUserMedia`. Pristine-pixel input
+   decodes far better than a camera ever will; it also gives Phase 0 a perfect regression
+   fixture.
+6. **Survive re-encoding.** YouTube-class transcodes smear sharp black/white edges (ringing,
+   blocking, chroma subsampling). Countermeasures, all bench-measurable via item 5:
+   fewer/larger modules (lower QR versions), 1080p-integer module scaling, each QR frame held
+   ≥ 2 video frames, and — notably — **raise in-frame ECC to M or Q here**: the README's
+   ECC-L rationale is correct for the erasure-dominant camera channel but inverts on a
+   corruption-prone codec channel.
+7. **Honest security notes in the README.** Encryption hides content, not existence — a QR
+   video is conspicuously a data stream. Authenticity extends only to whoever holds the key
+   (no signatures in scope). And ciphertext posted publicly is exposed to offline guessing
+   *forever*: for anything published, prefer generated random keys over passphrases.
+
+*Acceptance:* a file exported as video, uploaded to YouTube, re-downloaded at 1080p, and fed
+to the receiver round-trips bit-exact with the right key; a wrong key is cleanly rejected;
+no plaintext (including filename) appears anywhere in the published stream.
 
 ### Phase 4 — Embeddable library + hosted demo (the "embed it on a website" goal)
 
@@ -236,7 +291,14 @@ measurably beats its raw transfer time; nothing regresses for the demo images.
 5. **Hosted demo on GitHub Pages** (from Phase 0's CI): a real certificate finally kills the
    self-signed-cert tap-through, so "try it" becomes: open URL on laptop, open URL on phone,
    point. (Trade-off to document: both devices need internet to *load* the page; the payload
-   still travels only as light. Air-gapped use keeps the self-hosted path.)
+   still travels only as light. Air-gapped use gets the kit below.)
+6. **Air-gap kit**: a single self-contained HTML file (sender + receiver, worker and WASM
+   inlined as data URIs, zero external requests) downloadable from the demo site. Carry it
+   onto the isolated machine once, serve it from `localhost` (any one-liner static server —
+   camera requires a secure context and `localhost` qualifies, so it works fully offline),
+   and the device never needs a network again. This makes the "air-gapped transmission
+   system" reading of the project a first-class, documented deployment mode rather than an
+   accident of the dev server.
 
 *Acceptance:* a fresh Vite app and a plain HTML page can each integrate send+receive in
 ≤ ~10 lines; demo live on Pages; README gains API docs and an embed recipe.
@@ -269,7 +331,8 @@ not binary-safe for arbitrary bytes); WebRTC/network fallbacks (defeats the enti
 | Phase 1 | ~2–3 days | 2× real-world today, enables v40/grid; biggest risk retired early |
 | Phase 2 | ~3–4 days | 3–5× ceiling; hits the ~100–150 KB/s target |
 | Phase 3 | ~2 days | Product-shaped: real files, compression, real UX |
-| Phase 4 | ~2–3 days | npm + CDN embeddable, hosted demo |
+| Phase 3B | ~2–3 days | Sealed streams: E2E encryption, video export, decode-from-video, publish-anywhere |
+| Phase 4 | ~2–3 days | npm + CDN embeddable, hosted demo, air-gap kit |
 | Phase 5 | spike first | Only after 1–2 land; go/no-go on measured channel separation |
 
 Quick wins that could land immediately, independent of the phases: tuned zxing options
