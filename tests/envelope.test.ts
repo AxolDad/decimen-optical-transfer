@@ -49,6 +49,25 @@ describe("envelope", () => {
     const back = await inflate(squeezed!);
     expect(Buffer.from(back).equals(Buffer.from(compressible))).toBe(true);
   });
+
+  it("refuses a decompression bomb instead of exhausting memory", async () => {
+    // 8 MB of zeros compresses to a few KB — the shape of a hostile stream
+    // that declares a small size and expands without bound.
+    const bomb = await deflate(new Uint8Array(8 * 1024 * 1024));
+    expect(bomb).not.toBeNull();
+    expect(bomb!.length).toBeLessThan(64 * 1024);
+    await expect(inflate(bomb!, 1024)).rejects.toThrow(/limit/);
+    // the same data inflates fine when the cap actually allows it
+    const ok = await inflate(bomb!, 8 * 1024 * 1024);
+    expect(ok.length).toBe(8 * 1024 * 1024);
+  });
+
+  it("allows output exactly at the cap", async () => {
+    const data = bytes(5000);
+    const squeezed = (await deflate(data))!;
+    const out = await inflate(squeezed, data.length);
+    expect(out.length).toBe(data.length);
+  });
 });
 
 describe("sameStream", () => {

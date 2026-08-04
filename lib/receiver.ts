@@ -9,6 +9,11 @@
 // Sealed streams separate COLLECTION from DECRYPTION: onLocked fires when a
 // complete, FNV-verified ciphertext is held; unlock(key) can happen before,
 // during, or long after — a wrong key fails GCM auth cleanly.
+//
+// LIFECYCLE: an instance is single-shot. Once a transfer completes it stops
+// capturing and ignores further frames; construct a new OpticalReceiver to
+// receive again. (unlock() stays callable after completion for sealed
+// streams that are still locked.)
 
 import { unseal, isSealed } from "../shared/crypto";
 import { FLAG_DEFLATE, inflate, parseEnvelope } from "../shared/envelope";
@@ -20,6 +25,12 @@ const OVERHEAD_EST = 1.18; // measured 1.11–1.28; progress/goodput estimate on
 const MISS_LIMIT = 12;
 const MAX_CELLS = 4;
 const SWEEP_MS = 1000;
+// A looping video file that yields nothing new for this long can't finish:
+// either it holds no codes at all, or the recording is short of K frames.
+// (Cameras are exempt — a camera pointed at nothing is the user's business.)
+const FILE_STALL_MS = 10_000;
+/** Refuse to reconstruct a file larger than this unless told otherwise. */
+const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 
 const ACQUIRE_OPTS = {
   formats: ["QRCode"] as string[],
@@ -65,6 +76,13 @@ export interface ReceiverOptions {
   workers?: number | "auto";
   /** Pre-supplied key for sealed streams (hex-64 or passphrase). */
   key?: string;
+  /** Reject files declaring more than this many bytes, and cap decompression
+   * at it. Defaults to 256 MB — a hostile stream should not be able to make
+   * the page allocate without bound. */
+  maxFileBytes?: number;
+  /** Give up on a video-FILE source after this long with no new frames
+   * (default 10 s). Camera sources are never timed out. */
+  fileStallMs?: number;
   onProgress?(fraction: number): void;
   /** Complete + verified, but sealed — call unlock(key). */
   onLocked?(wireLength: number): void;
@@ -96,6 +114,10 @@ export class OpticalReceiver {
   private key: string | undefined;
   private lockedWire: Uint8Array | null = null;
   private lockedSeconds = 0;
+  private unlocking = false;
+  private delivered = false;
+  private isFileSource = false;
+  private lastProgressTs = 0;
 
   private cells: Cell[] = [];
   private nextCellId = 1;
@@ -124,6 +146,7 @@ export class OpticalReceiver {
   async start(): Promise<void> {
     const src = this.opts.source;
     if (src instanceof File) {
+      this.isFileSource = true;
       this.fileUrl = URL.createObjectURL(src);
       this.video.src = this.fileUrl;
       this.video.loop = true;
@@ -165,8 +188,31 @@ export class OpticalReceiver {
       wanted === "auto" ? Math.min(Math.max(1, (navigator.hardwareConcurrency || 4) - 1), 4) : wanted;
     for (let i = 0; i < workerCount; i++) this.spawnWorker(i);
     this.gen++;
+    this.lastProgressTs = performance.now();
     this.scheduleFrame(this.gen);
-    this.statsTimer = window.setInterval(() => this.emitStats(), 500);
+    this.statsTimer = window.setInterval(() => this.tick(), 500);
+  }
+
+  private tick() {
+    this.checkStall();
+    this.emitStats();
+  }
+
+  /** A video file that stops yielding NEW frames will never finish — say so
+   * instead of looping in silence forever. Duplicates don't count as
+   * progress, which is exactly what a re-looping recording produces. */
+  private checkStall() {
+    if (!this.isFileSource || this.collected || this.stopped) return;
+    const limit = this.opts.fileStallMs ?? FILE_STALL_MS;
+    if (performance.now() - this.lastProgressTs < limit) return;
+    const got = this.decoder?.framesNew ?? 0;
+    const need = this.decoder ? Math.ceil(this.decoder.k * OVERHEAD_EST) : 0;
+    this.stop();
+    this.opts.onError?.(
+      got === 0
+        ? "no decodable frames found in this video"
+        : `stalled at ${got} of ~${need} frames — the recording is too short or too damaged to complete`,
+    );
   }
 
   stop(): void {
@@ -191,15 +237,22 @@ export class OpticalReceiver {
   /** Open a collected sealed stream. No-op until onLocked has fired. */
   async unlock(key?: string): Promise<void> {
     if (key !== undefined) this.key = key;
-    if (!this.lockedWire || this.key === undefined || this.key === "") return;
+    // Guard re-entry: a pre-supplied key auto-unlocks on lock, and the host
+    // app may call unlock() too. Both would derive and deliver — firing
+    // onComplete twice — without this.
+    if (!this.lockedWire || !this.key || this.unlocking || this.delivered) return;
+    this.unlocking = true;
     let envelope: Uint8Array;
     try {
       envelope = await unseal(this.lockedWire, this.key);
     } catch (err) {
+      this.unlocking = false; // a wrong key is retryable — let them try again
       this.opts.onError?.(err instanceof Error ? err.message : String(err));
       return;
     }
+    // stays held across deliver() so a concurrent call can't double-fire
     await this.deliver(envelope, this.lockedWire.length, true, this.lockedSeconds);
+    this.unlocking = false;
   }
 
   camera(): MediaStream | null {
@@ -406,7 +459,11 @@ export class OpticalReceiver {
       this.streamHeader = header;
       this.startTs = performance.now();
     }
+    const before = this.decoder.framesNew;
     this.decoder.addFrame(header.seq, block);
+    // Only genuinely new frames count as progress — a looping video replaying
+    // the same codes must not hold the stall watchdog open forever.
+    if (this.decoder.framesNew > before) this.lastProgressTs = performance.now();
     this.opts.onProgress?.(
       Math.min(0.99, this.decoder.framesNew / (this.decoder.k * OVERHEAD_EST)),
     );
@@ -441,14 +498,25 @@ export class OpticalReceiver {
   }
 
   private async deliver(envelope: Uint8Array, wireLength: number, sealed: boolean, seconds: number) {
+    if (this.delivered) return;
     const parsed = parseEnvelope(envelope);
     if (!parsed) {
       this.opts.onError?.("received, but the envelope is malformed");
       return;
     }
+    const maxBytes = this.opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+    if (!(parsed.meta.size >= 0) || parsed.meta.size > maxBytes) {
+      this.opts.onError?.(
+        `declared file size ${parsed.meta.size} is outside the accepted range (0…${maxBytes} bytes)`,
+      );
+      return;
+    }
     let bytes: Uint8Array;
     try {
-      bytes = parsed.flags & FLAG_DEFLATE ? await inflate(parsed.data) : parsed.data;
+      // Cap at the declared size: the stream is untrusted, and anything past
+      // what it claims is a bomb, not a file. (The equality check below then
+      // catches an under-run.)
+      bytes = parsed.flags & FLAG_DEFLATE ? await inflate(parsed.data, parsed.meta.size) : parsed.data;
     } catch (err) {
       this.opts.onError?.(err instanceof Error ? err.message : String(err));
       return;
@@ -457,6 +525,7 @@ export class OpticalReceiver {
       this.opts.onError?.("size mismatch after decompression");
       return;
     }
+    this.delivered = true;
     this.lockedWire = null;
     this.opts.onComplete?.({
       name: parsed.meta.name,

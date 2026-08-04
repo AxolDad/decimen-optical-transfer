@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { HEADER_LEN, fnv1a, packFrame, parseFrame, splitmix32 } from "../shared/protocol";
 import type { FrameHeader } from "../shared/protocol";
 
+// k must be exactly ceil(totalLen / blockLen) — parseFrame enforces it, so
+// the fixture has to be self-consistent: ceil(2097152 / 1445) = 1452.
 const HEADER: FrameHeader = {
   sessionId: 0xbeef,
   seq: 123456,
-  k: 1451,
+  k: 1452,
   blockLen: 1445,
   totalLen: 2 * 1024 * 1024,
   payloadFnv: 0xdeadbeef,
@@ -29,16 +31,32 @@ describe("packFrame / parseFrame", () => {
   });
 
   it("round-trips boundary field values", () => {
+    // Every field at its maximum, while still satisfying the geometry
+    // invariant: 0xffff blocks × 0xffff bytes is exactly totalLen.
     const h: FrameHeader = {
       sessionId: 0xffff,
       seq: 0xffffffff,
       k: 0xffff,
-      blockLen: 8,
-      totalLen: 0xffffffff,
+      blockLen: 0xffff,
+      totalLen: 0xffff * 0xffff,
       payloadFnv: 0xffffffff,
     };
-    const parsed = parseFrame(packFrame(h, makeBlock(8)));
+    expect(h.totalLen).toBeLessThanOrEqual(0xffffffff);
+    const parsed = parseFrame(packFrame(h, makeBlock(0xffff)));
     expect(parsed!.header).toEqual(h);
+  });
+
+  it("rejects headers whose k disagrees with totalLen / blockLen", () => {
+    // Untrusted-input guard: a lying header (huge totalLen, small k) would
+    // otherwise make the decoder allocate for a stream that cannot carry it.
+    const block = makeBlock(HEADER.blockLen);
+    expect(parseFrame(packFrame({ ...HEADER, k: HEADER.k - 1 }, block))).toBeNull();
+    expect(parseFrame(packFrame({ ...HEADER, k: HEADER.k + 1 }, block))).toBeNull();
+    expect(parseFrame(packFrame({ ...HEADER, k: 1 }, block))).toBeNull();
+    // the 4 GB claim carried by a handful of small frames
+    expect(parseFrame(packFrame({ ...HEADER, totalLen: 0xffffffff }, block))).toBeNull();
+    // …and the honest header still parses
+    expect(parseFrame(packFrame(HEADER, block))).not.toBeNull();
   });
 
   it("parses frames sitting at a nonzero byteOffset in a larger buffer", () => {

@@ -23,8 +23,13 @@ export const FLAG_SEALED = 0b0000_0010; // envelope/wire flags bit 1
 
 const SALT_LEN = 16;
 const IV_LEN = 12;
+const TAG_LEN = 16; // AES-GCM authentication tag, appended to the ciphertext
 export const PBKDF2_ITERATIONS = 600_000;
 
+/** An input of exactly 64 hex chars is taken as a raw key, NOT a passphrase
+ * (no salt, no PBKDF2). A human passphrase that happens to be 64 hex
+ * characters would therefore be used verbatim as key material — vanishingly
+ * unlikely, but it is a silent reinterpretation, so it is stated here. */
 const HEX64 = /^[0-9a-fA-F]{64}$/;
 
 export function randomKeyHex(): string {
@@ -82,17 +87,33 @@ export async function seal(envelope: Uint8Array, keyInput: string): Promise<Uint
   return wire;
 }
 
+/** Flagged sealed AND long enough to hold salt + iv + a GCM tag. Anything
+ * shorter is truncated, not merely unopenable — worth saying separately. */
 export function isSealed(wire: Uint8Array): boolean {
-  return wire.length > 1 + SALT_LEN + IV_LEN && (wire[0]! & FLAG_SEALED) !== 0;
+  return wire.length >= 1 + SALT_LEN + IV_LEN + TAG_LEN && (wire[0]! & FLAG_SEALED) !== 0;
 }
 
-/** Open a sealed wire. Throws on a wrong key (GCM authentication failure). */
+/** Open a sealed wire. Throws on a wrong key (GCM authentication failure).
+ * Failures are reported distinctly — a truncated wire and an unusable key
+ * are not the same problem as a wrong key, and saying "wrong key" for all
+ * three sends people hunting for the wrong thing. */
 export async function unseal(wire: Uint8Array, keyInput: string): Promise<Uint8Array> {
-  if (!isSealed(wire)) throw new Error("not a sealed stream");
+  if ((wire[0] ?? 0) & FLAG_SEALED) {
+    if (!isSealed(wire)) throw new Error("sealed stream is truncated — too short to hold a key header");
+  } else {
+    throw new Error("not a sealed stream");
+  }
   const salt = wire.subarray(1, 1 + SALT_LEN);
   const iv = wire.subarray(1 + SALT_LEN, 1 + SALT_LEN + IV_LEN);
   const ct = wire.subarray(1 + SALT_LEN + IV_LEN);
-  const key = await keyFromInput(keyInput, salt);
+  let key: CryptoKey;
+  try {
+    key = await keyFromInput(keyInput, salt);
+  } catch (err) {
+    throw new Error(
+      `could not derive a key from that input: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   try {
     return new Uint8Array(
       await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, ct as BufferSource),

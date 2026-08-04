@@ -49,6 +49,17 @@ describe("sealed streams", () => {
     expect(hay.includes("TOPSECRET")).toBe(false);
   });
 
+  it("reports truncation distinctly from a wrong key", async () => {
+    const wire = await seal(packEnvelope({ name: "n", mime: "m", size: 64 }, bytes(64), 0), "pw");
+    // flagged sealed, but too short to hold salt + iv + GCM tag
+    const truncated = wire.slice(0, 30);
+    expect(isSealed(truncated)).toBe(false);
+    await expect(unseal(truncated, "pw")).rejects.toThrow(/truncated/);
+    // no seal flag at all is a different message again
+    const plain = packEnvelope({ name: "n", mime: "m", size: 8 }, bytes(8), 0);
+    await expect(unseal(plain, "pw")).rejects.toThrow(/not a sealed stream/);
+  });
+
   it("leaves unsealed envelopes distinguishable", () => {
     const plain = packEnvelope({ name: "n", mime: "m", size: 8 }, bytes(8), 0);
     expect(isSealed(plain)).toBe(false);

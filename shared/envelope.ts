@@ -60,12 +60,45 @@ export async function deflate(data: Uint8Array): Promise<Uint8Array | null> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-export async function inflate(data: Uint8Array): Promise<Uint8Array> {
+/** Ceiling for a single inflate when the caller names no other limit. */
+export const DEFAULT_MAX_INFLATE = 256 * 1024 * 1024;
+
+/** Raw-inflate, aborting past `maxBytes`.
+ *
+ * Frames come off a channel anyone can broadcast into, and deflate reaches
+ * ~1000:1, so a few KB of hostile stream can name a small `meta.size` and
+ * still expand to gigabytes. Buffering the whole stream and checking the
+ * size afterwards is too late — the tab is already dead. So this reads
+ * incrementally and gives up the moment the cap is passed. */
+export async function inflate(
+  data: Uint8Array,
+  maxBytes = DEFAULT_MAX_INFLATE,
+): Promise<Uint8Array> {
   if (typeof DecompressionStream !== "function") {
     throw new Error("this browser can't decompress (DecompressionStream missing)");
   }
   const stream = new Blob([data as BlobPart]).stream().pipeThrough(
     new DecompressionStream("deflate-raw"),
-  );
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  ) as ReadableStream<Uint8Array>;
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const res = await reader.read();
+    if (res.done) break;
+    const chunk = res.value;
+    total += chunk.length;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`decompressed data passed the ${maxBytes}-byte limit — refusing to continue`);
+    }
+    chunks.push(chunk);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
 }

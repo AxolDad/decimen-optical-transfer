@@ -57,6 +57,11 @@ export function parseFrame(
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;
+  // Geometry must be internally consistent: k is exactly the block count the
+  // declared length implies. Frames arrive from an untrusted optical channel,
+  // and without this a lying header (huge totalLen, small k) makes the decoder
+  // allocate up to 4 GB for a stream that can never carry it.
+  if (header.k !== Math.ceil(header.totalLen / header.blockLen)) return null;
   return { header, block: bytes.subarray(HEADER_LEN) };
 }
 
