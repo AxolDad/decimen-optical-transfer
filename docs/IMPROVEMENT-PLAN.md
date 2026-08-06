@@ -63,21 +63,26 @@ end-to-end: a sealed file streamed over a canvas MediaStream locks, rejects a wr
 and unlocks byte-exact; and the publish-anywhere path — export a clip, decode the recording
 from scratch — round-trips byte-exact and sealed.
 
-Transcode survival is now **measured rather than assumed** (`tests/e2e/transcode.e2e.mjs`,
-run in CI on every push to the working branch). A sealed 28 KB incompressible payload
-exported through the "Encrypt for YouTube" preset becomes k=59 source blocks carried by ~160
-codes in a 20 s 4K clip — a ~63% loss tolerance, which is what makes the run evidence rather
-than luck — and after re-encoding through AV1, VP9 and H.264 bitrate ladders it decodes
-**byte-exact at every rung from 2160p down to 480p**. Safe floor 480p, now the guidance in
-the sender UI and the README, and item 6 below is validated as a set. Two caveats stay
-attached: the ladder simulates the codecs YouTube delivers and is not a round-trip through
-it, and nothing in that first ladder broke — so the number is a lower bound, not a margin,
-which is why the test now probes 360p/240p/144p beneath an explicit 480p gate. Getting one
-valid number took three runs, and the two failures (a compressible payload collapsing to
-k=2; then an LCG losing precision past 2^53 and degenerating into deflate-friendly
-structure) are recorded in `tests/e2e/README.md` — both would have reported a confident row
-of green ticks while measuring nothing, which is the failure mode this feature is most
-exposed to.
+Transcode survival is **measured rather than assumed** (`tests/e2e/transcode.e2e.mjs`, run
+in CI on every push to the working branch). A sealed 28 KB incompressible payload exported
+through the "Encrypt for YouTube" preset becomes k=59 source blocks carried by ~160 codes in
+a 20 s 4K clip — a ~63% loss tolerance, which is what makes the run evidence rather than
+luck — and after re-encoding through AV1, VP9 and H.264 bitrate ladders it comes back
+**byte-exact down to 240p, breaking at 144p** on all three codecs. The failures are graded
+the way the theory predicts: at 144p AV1 collects 10 of the ~70 frames it needs, VP9 gets
+49, H.264 gets 60 — AV1 spends the fewest bits precisely on the sharp edges the decoder
+lives on, so it is the first to give out. Item 6 below is validated as a set.
+
+The number shipped to users is **480p**, deliberately two rungs above the measured floor: a
+floor established at one bitrate point per rung is not a safe number when real per-title
+encoding moves that bitrate by >400% at a fixed resolution, so the test reports MEASURED
+FLOOR and RECOMMENDED GUIDANCE as separate lines rather than quietly shipping the more
+impressive one. The remaining caveat is unchanged: the ladder simulates the codecs YouTube
+delivers and is not a round-trip through it. Getting one trustworthy number took four runs,
+and the two early failures (a compressible payload collapsing to k=2; then an LCG losing
+precision past 2^53 and degenerating into deflate-friendly structure) are recorded in
+`tests/e2e/README.md`, because both would have reported a confident row of green ticks while
+measuring nothing.
 
 Phase 4 is implemented: the engine is now a library (`lib/`) — `OpticalSender` /
 `OpticalReceiver` classes plus `<optical-sender>` / `<optical-receiver>` Web Components —
@@ -335,7 +340,7 @@ the channel holds only ciphertext.
    ECC-L rationale is correct for the erasure-dominant camera channel but inverts on a
    corruption-prone codec channel. *(Implemented as the "Encrypt for YouTube" preset and
    measured — see the status note above: byte-exact through AV1/VP9/H.264 ladders down to
-   480p.)*
+   240p, breaking at 144p.)*
 7. **Honest security notes in the README.** Encryption hides content, not existence — a QR
    video is conspicuously a data stream. Authenticity extends only to whoever holds the key
    (no signatures in scope). And ciphertext posted publicly is exposed to offline guessing
@@ -347,10 +352,11 @@ no plaintext (including filename) appears anywhere in the published stream.
 
 **Status against that bar:** the wrong-key rejection and no-plaintext halves are verified in
 CI (`tests/e2e/lib.e2e.mjs`). The round-trip half is verified against a *simulated* AV1 /
-VP9 / H.264 ladder down to 480p (`tests/e2e/transcode.e2e.mjs`) — stronger than the 1080p
-the criterion asked for, but a simulation of YouTube's codecs rather than YouTube itself.
-The literal upload is the one step still outstanding; the CI run publishes the pre-transcode
-clip as an artifact and prints its key precisely so that step can be done by hand.
+VP9 / H.264 ladder down to 240p (`tests/e2e/transcode.e2e.mjs`) — three rungs deeper than
+the 1080p the criterion asked for, but a simulation of YouTube's codecs rather than YouTube
+itself. The literal upload is the one step still outstanding; the CI run publishes the
+pre-transcode clip as an artifact and prints its key precisely so that step can be done by
+hand.
 
 ### Phase 4 — Embeddable library + hosted demo (the "embed it on a website" goal)
 
