@@ -11,6 +11,8 @@ import { randomKeyHex } from "../shared/crypto";
 // slow code rate (each code spans several video frames), high in-frame ECC,
 // single code, sealed, recorded at 4K with heavy fountain redundancy — so a
 // lossy transcode's damage is absorbed by ECC + the fountain, not the file.
+// Measured against simulated AV1/VP9/H.264 ladders: byte-exact down to 240p,
+// breaks at 144p (tests/e2e/transcode.e2e.mjs).
 const YT_PRESET = { fps: 8, bytes: 500, codes: 1, ecc: "Q" as const, size: 1200 };
 const YT_EXPORT: ExportOptions = { overhead: 2.4, targetHeight: 2160, videoFps: 30, bitsPerSecond: 16_000_000 };
 
@@ -165,9 +167,14 @@ async function exportVideo(opts: ExportOptions = {}, filename = "decimen-stream.
       const tip = document.createElement("div");
       tip.className = "hint";
       tip.style.paddingTop = "6px";
+      // 480p rather than the measured 240p floor on purpose: each ladder rung
+      // is one bitrate point, and real per-title encoding moves the bitrate at
+      // a fixed resolution by >400%, so the floor is not a safe number.
       tip.textContent =
-        "Upload at full resolution (don't let anything down-res it). Keep the key safe and separate — " +
-        "without it the video is unrecoverable; with it, anyone who finds the video can open it.";
+        "Upload at full resolution (don't let anything down-res it), and download at 480p or " +
+        "better — a sealed clip survives simulated AV1/VP9 re-encoding down to 240p, so 480p " +
+        "keeps two rungs of margin. Keep the key safe and separate — without it the video is " +
+        "unrecoverable; with it, anyone who finds the video can open it.";
       exportOut.append(tip);
     }
   } catch (err) {

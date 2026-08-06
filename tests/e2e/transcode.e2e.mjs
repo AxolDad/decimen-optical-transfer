@@ -13,17 +13,19 @@
 //   3. feeds each re-encoded file back through the real OpticalReceiver
 //   4. reports which rungs still reconstruct the file byte-exact
 //
-// The answer we want is not pass/fail but the SAFE FLOOR: the shallowest rung
-// that every delivered codec still survives, since a viewer does not choose
-// which rendition they get. That is the honest guidance to hand a user
-// ("download at 480p or better").
-//
 // The ladder deliberately runs PAST the bar it has to clear (see GATE). The
-// first valid run cleared every rung down to 480p, which established a lower
-// bound and nothing else: a ladder that never breaks doesn't tell you your
-// margin, only that you didn't push hard enough. The low rungs exist to find
-// the rung that actually breaks, and failing one of those is information, not
-// a regression — only falling short of GATE fails the test.
+// first valid run cleared every rung down to 480p — which was the bottom of
+// the ladder at the time, so it established a lower bound and nothing else: a
+// ladder that never breaks doesn't tell you your margin, only that you didn't
+// push hard enough. Extending it downward found the real edge: every
+// delivered codec survives to 240p, and every one of them fails at 144p.
+// Failing a probe rung below GATE is information, not a regression — only
+// falling short of GATE fails the test.
+//
+// Note that the measured floor is NOT the number to hand a user. Each rung
+// here is one bitrate point; YouTube's per-title encoding moves the real
+// bitrate at a fixed resolution by >400%. The verdict therefore reports the
+// measured floor and the recommended guidance separately.
 //
 // Run:
 //   npm run build:lib
@@ -59,10 +61,11 @@ const LADDER = [
   { name: "144p", height: 144, vp9: 200 },
 ];
 
-// The rung the feature must reach for this test to pass. Set to the depth
-// already demonstrated, so the test is a regression gate on proven ground
-// rather than an aspiration. Rungs below it are probed to locate the real
-// breaking point; failing those is a measurement, not a failure.
+// The rung the feature must reach for this test to pass, and the number the
+// docs and UI actually recommend to a user. Measured floor is 240p, so this
+// keeps two rungs of deliberate margin — see the note at the top about why a
+// measured floor is not a safe floor. Rungs below GATE are probed to locate
+// the breaking point; failing those is a measurement, not a failure.
 const GATE = "480p";
 
 // As of 2026 YouTube delivers AV1 as its primary codec (VP9 remains the
@@ -70,7 +73,9 @@ const GATE = "480p";
 // would be measuring a rendition many viewers never receive. AV1 also runs
 // ~20% BELOW VP9 for equivalent perceptual quality — fewer bits spent on
 // exactly the sharp black/white edges QR decoding depends on — so it is
-// plausibly the harsher case and must be covered.
+// plausibly the harsher case and must be covered. (Measured: at the 144p
+// breaking point AV1 collects 10 of ~70 needed frames where VP9 gets 49 and
+// H.264 gets 60, so it is indeed the first to give out.)
 //
 // `scale` converts the VP9 rung bitrate to each codec's equivalent.
 const FAMILIES = [
@@ -290,7 +295,7 @@ async function main() {
     process.stdout.write("decoding… ");
     const url = `/transcode-test/rung-${tag}.${fam.ext}`;
     const res = await page.evaluate(
-      async ({ url, key, size, seed, needK }) => {
+      async ({ url, key, size, seed }) => {
         const lib = window.DecimenLib;
         const blob = await (await fetch(url)).blob();
         const file = new File([blob], "clip", { type: blob.type });
@@ -330,15 +335,19 @@ async function main() {
           setTimeout(() => resolve({ ok: false, exact: false, err: "hard timeout" }), 300_000);
         });
         video.remove();
-        return { ...out, peakFrames, needK, seconds: (performance.now() - started) / 1000 };
+        return { ...out, peakFrames, seconds: (performance.now() - started) / 1000 };
       },
-      { url, key: exported.key, size: PAYLOAD_BYTES, seed: PAYLOAD_SEED, needK: exported.k },
+      { url, key: exported.key, size: PAYLOAD_BYTES, seed: PAYLOAD_SEED },
     );
     const ok = res.ok && res.exact;
+    // The receiver's own error already reports collected-vs-needed correctly
+    // ("stalled at 60 of ~70 frames"); don't restate it against k, which is
+    // the block count rather than the ~1.2k frames the fountain needs — that
+    // printed things like "collected 60/59" and read like a bug.
     console.log(
       ok
         ? `DECODED ✓ (${res.seconds.toFixed(1)}s, byte-exact)`
-        : `failed — ${res.err ?? "content mismatch"} (collected ${res.peakFrames}/${res.needK} frames)`,
+        : `failed — ${res.err ?? "content mismatch"}`,
     );
     results.push({ family: fam.key, ...rung, kbps, ok, peakFrames: res.peakFrames, note: res.err ?? "" });
    }
@@ -366,8 +375,8 @@ async function main() {
 
   // The honest bar: it has to survive EVERY codec YouTube actually delivers,
   // because a viewer doesn't choose which rendition they're served. So the
-  // guidance is the safe floor — the shallowest depth every real codec
-  // reached, not the deepest one some codec happened to manage.
+  // floor is the shallowest depth every real codec reached, not the deepest
+  // one some codec happened to manage.
   console.log();
   const reps = families.filter((f) => f.representative);
   let exitCode = 1;
@@ -389,24 +398,36 @@ async function main() {
     } else if (worst < gateRung) {
       const weakest = floors.find((f) => f.idx === worst);
       console.log(
-        `VERDICT: FAILS the ${GATE} bar. The safe floor is ${LADDER[worst].name} — ${weakest.key} is the\n` +
-          `codec that gives out first — but YouTube serves ${GATE} routinely, so a viewer can\n` +
-          "be handed a rendition this clip cannot survive. The preset needs bigger\n" +
+        `VERDICT: FAILS the ${GATE} bar. The measured floor is ${LADDER[worst].name} — ${weakest.key} is\n` +
+          `the codec that gives out first — but YouTube serves ${GATE} routinely, so a viewer\n` +
+          "can be handed a rendition this clip cannot survive. The preset needs bigger\n" +
           "modules, more redundancy, or both.",
       );
     } else {
       const floor = LADDER[worst];
       const broke = LADDER[worst + 1];
+      const headroom = worst - gateRung;
       console.log(
-        `VERDICT: survives every codec YouTube delivers, down to ${floor.name}.\n` +
-          `Guidance to users: download at ${floor.name} or better.`,
+        `MEASURED FLOOR: ${floor.name} — every codec YouTube delivers reconstructed the file\n` +
+          "byte-exact down to this rung.",
       );
       console.log(
         broke
-          ? `Margin: ${worst - gateRung} rung(s) of headroom past the ${GATE} bar; the shallowest rung\n` +
-            `that actually breaks is ${broke.name}.`
-          : `Margin: unknown — the clip survived every rung tested, down to the bottom of\n` +
-            `the ladder (${LADDER[LADDER.length - 1].name}). Extend LADDER to find the real floor.`,
+          ? `First rung that breaks: ${broke.name}.`
+          : `Nothing in the ladder broke, down to ${LADDER[LADDER.length - 1].name} — so this is a lower\n` +
+            "bound, not a margin. Extend LADDER to find the real floor.",
+      );
+      // A measured floor is not a safe floor, and the two must not be conflated:
+      // reporting "download at <measured floor>" would hand a user a number with
+      // zero margin against a bitrate ladder that is itself an approximation.
+      console.log(
+        `\nRECOMMENDED GUIDANCE: download at ${GATE} or better.` +
+          (headroom > 0
+            ? `\nThat sits ${headroom} rung(s) above the measured floor, deliberately. Each rung here\n` +
+              "is a single bitrate point, while YouTube's per-title encoding moves the real\n" +
+              "bitrate at a fixed resolution by >400% — so a measured floor is not a safe floor."
+            : "\nThe measured floor sits exactly at this bar, with no margin. Treat it as the\n" +
+              "minimum that happens to work rather than a comfortable recommendation."),
       );
       exitCode = 0;
     }
