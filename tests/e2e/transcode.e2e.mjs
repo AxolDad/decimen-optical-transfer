@@ -149,14 +149,26 @@ async function main() {
   console.log(`exporting a sealed clip (YouTube preset, ${PAYLOAD_BYTES} B payload)…`);
   const exported = await page.evaluate(async ({ size, seed }) => {
     const lib = window.DecimenLib;
-    // deterministic pseudo-random bytes: incompressible, so the wire length
-    // (and therefore k) is predictable, and reproducible for verification
+    // Deterministic pseudo-random bytes: incompressible, so the wire length
+    // (and therefore k) is predictable, and reproducible for verification.
+    //
+    // splitmix32, the same construction shared/protocol.ts uses. A plain LCG
+    // is wrong here: `s * 1103515245` in JS is float64, and once s approaches
+    // 2^31 that product passes 2^53, so the low bits round away and the
+    // generator degenerates into structure that deflate happily eats. The
+    // first attempt did exactly that — 28 KB compressed to 13 KB. Math.imul
+    // keeps every step in exact 32-bit integers.
     const makePayload = () => {
       const out = new Uint8Array(size);
-      let s = seed;
+      let s = seed | 0;
       for (let i = 0; i < size; i++) {
-        s = (s * 1103515245 + 12345) & 0x7fffffff;
-        out[i] = (s >>> 16) & 0xff;
+        s = (s + 0x9e3779b9) | 0;
+        let t = s ^ (s >>> 16);
+        t = Math.imul(t, 0x21f0aaad);
+        t ^= t >>> 15;
+        t = Math.imul(t, 0x735a2d97);
+        t ^= t >>> 15;
+        out[i] = (t >>> 0) & 0xff;
       }
       return out;
     };
@@ -202,6 +214,13 @@ async function main() {
       `  ~${exported.k} good codes out of the ~${codesInClip} in the clip, so it tolerates losing\n` +
       `  roughly ${Math.round((1 - exported.k / codesInClip) * 100)}% of them before failing.`,
   );
+  if (exported.wire < PAYLOAD_BYTES * 0.9) {
+    throw new Error(
+      `the payload compressed (${PAYLOAD_BYTES} B -> ${exported.wire} B on the wire). It is ` +
+        `supposed to be incompressible; a generator producing structure makes k smaller and ` +
+        `the test weaker than intended.`,
+    );
+  }
   if (exported.k < MIN_K) {
     throw new Error(
       `k=${exported.k} is too small (need >= ${MIN_K}). At this size the fountain wins on ` +
@@ -259,13 +278,19 @@ async function main() {
             fileStallMs: 20_000,
             onStats: (s) => { peakFrames = Math.max(peakFrames, s.framesNew); },
             onComplete: (f) => {
-              // regenerate the expected bytes and compare in-page, so a
-              // multi-KB payload never crosses the CDP bridge
-              let s = seed;
+              // regenerate the expected bytes (same splitmix32 as the sender
+              // side) and compare in-page, so a multi-KB payload never
+              // crosses the CDP bridge
+              let s = seed | 0;
               let exact = f.bytes.length === size;
               for (let i = 0; exact && i < size; i++) {
-                s = (s * 1103515245 + 12345) & 0x7fffffff;
-                if (f.bytes[i] !== ((s >>> 16) & 0xff)) exact = false;
+                s = (s + 0x9e3779b9) | 0;
+                let t = s ^ (s >>> 16);
+                t = Math.imul(t, 0x21f0aaad);
+                t ^= t >>> 15;
+                t = Math.imul(t, 0x735a2d97);
+                t ^= t >>> 15;
+                if (f.bytes[i] !== ((t >>> 0) & 0xff)) exact = false;
               }
               resolve({ ok: true, exact });
             },
