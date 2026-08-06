@@ -3,32 +3,68 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — fountain-coded QR file transfer</title>
+    <title>Decimen — fountain-coded optical file transfer</title>
+    <meta
+      name="description"
+      content="Move a file between two devices with nothing but a screen and a camera. No network path, no pairing, no account."
+    />
     <link rel="stylesheet" href="./shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer (PoC)</small></h1>
-    <p class="hint" style="font-size: 17px; color: #ede5d4; max-width: 640px; line-height: 1.5">
+    <h1>Decimen <small>fountain-coded optical transfer</small></h1>
+
+    <p class="lede">
       <strong>YouTube as a dead drop.</strong> Encrypt a file, post it anywhere
       as a stream of animated light, and only the key holder can ever open it —
       no network, no account, no trace of what it is.
     </p>
-    <p class="hint">
-      Send a file between two devices using nothing but a screen and a camera.
-      Open <a href="./send/">send</a> on the device with the file (a laptop is
-      ideal) and <a href="./receive/">receive</a> on a phone, then point the
-      phone's camera at the flickering code.
+
+    <p>
+      Underneath that: a file crosses between two devices using nothing but a
+      screen and a camera. One displays it as an endless stream of QR codes,
+      the other watches and reconstructs it. There is no network path between
+      them, no pairing step, and no permission beyond the camera. The payload
+      travels as light.
     </p>
-    <p class="hint">
-      No network path between the devices is used — the payload travels as
-      light. Fountain coding means the receiver can drop any frames, in any
-      order, and still reconstruct the file.
+
+    <h2>Open one on each device</h2>
+    <nav class="routes">
+      <a class="route" href="./send/">
+        <span class="route-name">Send</span>
+        <span class="route-note">
+          The device holding the file — a laptop is ideal. Starts streaming
+          immediately; drop any file onto the page to send it.
+        </span>
+      </a>
+      <a class="route" href="./receive/">
+        <span class="route-name">Receive</span>
+        <span class="route-note">
+          The device with the camera, usually a phone. Point it at the
+          flickering code and hold steady, or prop it against something.
+        </span>
+      </a>
+    </nav>
+
+    <h2>Why it survives a channel this bad</h2>
+    <p>
+      A screen-to-camera link has no back-channel: the receiver cannot ask for
+      a frame again, and it will miss plenty of them to blur, refresh
+      straddling and autofocus hunting. So no frame is any particular part of
+      the file. Each one is a fountain-coded combination of a random subset of
+      blocks, and collecting <em>any</em> sufficient number of them, in any
+      order, reconstructs the original. Dropped frames cost a little time and
+      never cost correctness — the two devices never even agree on a frame
+      rate.
     </p>
-    <p class="hint">
-      Tuning? The <a href="./bench/">bench</a> page runs the whole pipeline
-      camera-free to measure this device's decode ceiling. Curious? The
-      <a href="./kaleido/">kaleidoscope</a> experiment draws the same fountain
-      stream as a spinning mandala of colored wedges instead of QR codes.
+
+    <h2>Also here</h2>
+    <p>
+      <a href="./bench/">Bench</a> runs the whole pipeline camera-free to
+      measure a device's decode ceiling, which is the honest way to find out
+      whether the optics or the CPU is the limit.
+      <a href="./kaleido/">Kaleidoscope</a> is an experiment that draws the
+      same fountain stream as a rotating mandala of coloured wedges instead of
+      QR codes.
     </p>
   </body>
 </html>

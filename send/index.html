@@ -3,17 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — send</title>
+    <title>Decimen — send</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
+    <h1>Decimen <small>send</small></h1>
+
     <div class="hint" id="specs">loading payload…</div>
-    <div class="hint" style="color: #ffb257">
-      ⚠ This page displays a rapidly flashing high-contrast pattern. If you are
-      sensitive to flashing light, don't view it directly — point the receiving
-      camera at the screen instead, or lower <em>target fps</em> in Settings.
-    </div>
+
+    <p class="caution">
+      This page displays a rapidly flashing high-contrast pattern. If you are
+      sensitive to flashing light, don't look at it directly — point the
+      receiving camera at the screen instead, or lower <em>target fps</em> in
+      settings.
+    </p>
+
     <details class="settings">
       <summary>Settings</summary>
       <div class="row">
@@ -88,7 +92,7 @@
           encryption
           <select id="cfg-seal">
             <option value="" selected>off</option>
-            <option value="sealed">sealed 🔒</option>
+            <option value="sealed">sealed</option>
           </select>
         </label>
         <label>
@@ -96,44 +100,53 @@
           <input id="cfg-pass" type="text" autocomplete="off" />
         </label>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Changes restart the stream — the receiver resets automatically (new
-        session id in the frame headers; that's the fountain protocol's gift).
-        Frames are held for a whole number of display refresh cycles, so the
-        actual fps (shown above) is the nearest exact division of your
-        screen's refresh rate. Grids multiply data per frame but shrink the
-        modules — get closer or use a bigger display.
+      <div class="hint" style="padding-top: 0.85rem">
+        Changing anything restarts the stream, and the receiver resets itself
+        off the new session id — that's the fountain protocol's gift. Frames
+        are held for a whole number of display refresh cycles, so the actual
+        fps shown above is the nearest exact division of your screen's refresh
+        rate. Grids multiply data per frame but shrink the modules: get closer,
+        or use a bigger display.
       </div>
     </details>
-    <div id="key-row" class="hint" style="display: none; align-items: center; gap: 10px; justify-content: center">
-      <span id="key-text" style="word-break: break-all; max-width: 460px"></span>
+
+    <div id="key-row" style="display: none">
+      <span id="key-text"></span>
       <canvas id="key-qr" width="16" height="16"></canvas>
     </div>
+
     <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
-    <div>
-      <button id="export" style="display: none; font-size: 14px; padding: 8px 18px">Export video</button>
-      <button id="yt" style="display: none; font-size: 14px; padding: 8px 18px; background: #ff4d4d">🔒 Encrypt for YouTube</button>
-      <span id="export-out" class="hint"></span>
+
+    <div class="actions">
+      <button id="yt" style="display: none">Encrypt for YouTube</button>
+      <button id="export" class="quiet" style="display: none">Export video</button>
     </div>
-    <div class="hint" style="max-width: 640px">
-      <strong>Encrypt for YouTube</strong> seals the file and records a
-      transcode-hardened clip: big modules, a slow code rate so each code
-      spans several video frames, high error-correction, and heavy fountain
-      redundancy, rendered at 4K. The codec's damage lands on frames the
-      fountain can spare — not on your file. Upload it, keep the key, and only
-      the key opens it. <em>(Measured against simulated AV1, VP9 and H.264
-      ladders: byte-exact down to 240p, breaking at 144p — so download at 480p
-      or better and keep two rungs of margin. That simulates the codecs
-      YouTube delivers; it is not a YouTube round-trip. Treat it as a durable
-      second copy, not your only one.)</em>
-    </div>
-    <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done. Drop any file anywhere on this page to send it;
+    <div id="export-out" class="hint"></div>
+
+    <h2>Encrypt for YouTube</h2>
+    <p>
+      Seals the file and records a transcode-hardened clip: big modules, a slow
+      code rate so each code spans several video frames, high error correction
+      and heavy fountain redundancy, rendered at 4K. The codec's damage then
+      lands on frames the fountain can spare rather than on your file. Upload
+      it, keep the key, and only the key opens it.
+    </p>
+    <p>
+      Measured against simulated AV1, VP9 and H.264 ladders: byte-exact down to
+      240p, breaking at 144p — so download at 480p or better and keep two rungs
+      of margin. That simulates the codecs YouTube delivers; it is not a
+      YouTube round-trip. Treat it as a durable second copy, not your only one.
+    </p>
+
+    <h2>While it runs</h2>
+    <p>
+      Maximum screen brightness helps. The stream loops forever — stop when the
+      receiver says it's done. Drop any file anywhere on this page to send it:
       name and type travel inside the stream, and compressible files are
-      deflated on the fly. Sealed streams are ciphertext end to end — export
-      one as a video and host it anywhere; only the key opens it.
-    </div>
+      deflated on the fly. Sealed streams are ciphertext end to end, so an
+      exported clip can be hosted anywhere and only the key opens it.
+    </p>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
