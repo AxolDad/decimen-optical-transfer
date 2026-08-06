@@ -53,7 +53,10 @@
   --t-micro: 0.75rem;
   --t-readout: clamp(1.15rem, 0.9rem + 1.2vw, 1.6rem);
 
-  --measure: 64ch;
+  /* In rem, deliberately, not ch: `ch` resolves against each element's own
+     font size, so a heading and a paragraph would compute different widths
+     and — centred in the column — fail to share a left edge. */
+  --measure: 32rem;
   --radius: 6px;
   --radius-lg: 10px;
 
@@ -406,20 +409,21 @@ code {
 
 /* Big enough to read from the other side of a desk, because that is where the
    operator is standing. Tabular figures so the digits stop dancing. */
+/* Discrete bordered cells rather than a flush hairline grid. The readout
+   count is odd (ten), so a flush grid leaves empty tracks in the last row
+   that render as a lighter broken panel; separate cells simply end. */
 .metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  gap: 1px;
+  gap: 0.4rem;
   width: min(100%, var(--measure));
-  background: var(--line-soft);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 .metric {
   background: var(--ink-1);
-  padding: 0.6rem 0.75rem 0.7rem;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.7rem 0.65rem;
   min-width: 0;
 }
 
@@ -508,6 +512,7 @@ a.download:hover {
 }
 
 #key-text {
+  flex: 1 1 14rem;
   font-family: var(--mono);
   font-size: var(--t-small);
   color: var(--text);

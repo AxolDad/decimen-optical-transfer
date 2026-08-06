@@ -123,7 +123,7 @@ async function startStream() {
       if (gen !== generation) return;
       const squeeze = info.deflatedPct !== null ? ` (deflated to ${info.deflatedPct}%)` : "";
       specs.textContent =
-        `${payload.name} · ${Math.round(info.fileSize / 1024)} KB${squeeze}${info.sealed ? " · 🔒 sealed" : ""} · ` +
+        `${payload.name} · ${Math.round(info.fileSize / 1024)} KB${squeeze}${info.sealed ? " · sealed" : ""} · ` +
         `${info.fps.toFixed(info.fps % 1 ? 1 : 0)} fps (${info.ticks}v @ ${info.refreshHz} Hz) · ` +
         `${info.codes}× ${info.frameBytes} B · V${info.version} · ECC ${info.ecc} · ` +
         `K=${info.k} · raw ${info.rawKBs.toFixed(0)} KB/s · ≈${info.estSeconds}s`;
