@@ -5,14 +5,17 @@
 import { packEnvelope } from "../shared/envelope";
 import { LTDecoder, LTEncoder } from "../shared/fountain";
 import { HEADER_LEN, fnv1a, packFrame, parseFrame, splitmix32 } from "../shared/protocol";
+import { photograph } from "./camera";
+import { findMarkerAngle, locate, polarToImage, sampleAt } from "./locate";
 import {
+  MARKER,
   PALETTE,
+  SPIRAL,
   bytesToCells,
   capacityBytes,
   cellsToBytes,
   classify,
   dataRings,
-  findPhase,
   sectorAt,
   slotOf,
   syncColor,
@@ -25,6 +28,9 @@ const runBtn = document.getElementById("run") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const logEl = document.getElementById("log")!;
 const canvas = document.getElementById("wheel") as HTMLCanvasElement;
+const camStage = document.getElementById("cam-stage")!;
+const camCanvas = document.getElementById("cam") as HTMLCanvasElement;
+const camCtx = camCanvas.getContext("2d", { willReadFrequently: true })!;
 const cfg = (id: string) => (document.getElementById(id) as HTMLSelectElement).value;
 
 let running = false;
@@ -128,56 +134,65 @@ function run() {
     }
   };
 
-  const sampleRing = (img: ImageData, ring: number, k: number): [number, number, number] => {
-    const a = (k + 0.5) * slotSpan - Math.PI / 2;
-    const r = rIn + (ring + 0.5) * ringW;
-    const x = Math.round(cx + r * Math.cos(a));
-    const y = Math.round(cx + r * Math.sin(a));
-    let rr = 0;
-    let gg = 0;
-    let bb = 0;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const o = ((y + dy) * size + x + dx) * 4;
-        rr += img.data[o]!;
-        gg += img.data[o + 1]!;
-        bb += img.data[o + 2]!;
-      }
-    }
-    const n = () => (noise > 0 ? (Math.random() * 2 - 1) * noise : 0);
-    return [rr / 9 + n(), gg / 9 + n(), bb / 9 + n()];
-  };
+  // Normalised radius of a ring's centre. The denominator is the outermost
+  // LIT radius, not rOut: wedges are drawn with an 8% radial inset, so the
+  // last lit pixel sits short of the nominal rim and that is what the locator
+  // actually measures. Dividing by rOut instead would bias every sample
+  // inward by a fraction of a ring.
+  const rLit = rOut - ringW * 0.08;
+  const rhoOf = (ring: number) => (rIn + (ring + 0.5) * ringW) / rLit;
 
-  const decodeFrame = (): "ok" | "corrupt" | "dup" => {
-    const img = ctx.getImageData(0, 0, size, size);
-    // 1) phase from the sync ring (static palette is enough: its three
-    //    colors are far apart even under heavy noise)
-    const syncSeen: number[] = [];
-    for (let k = 0; k < S; k++) {
-      const [r, gr, b] = sampleRing(img, 0, k);
-      syncSeen.push(classify(r, gr, b, PALETTE as unknown as number[][]));
-    }
-    const phase = findPhase(syncSeen);
-    if (phase < 0) return "corrupt";
-    // 2) per-frame classifier centroids from the calibration ring
+  /**
+   * Decode from an image that may be anywhere, any size, tilted and rotated.
+   * Nothing here knows where the symbol was drawn — that is the entire point.
+   */
+  const decodeFrame = (data: Uint8ClampedArray, w: number, h: number):
+    | "ok" | "corrupt" | "dup" | "lost" => {
+    // 1) find the mandala: moments give centre and principal axes, a high
+    //    percentile of the projected extent gives the outer rim.
+    const e = locate(data, w, h);
+    if (!e) return "lost";
+
+    const ringWpx = (e.su * (1 - rIn / rLit)) / g.rings;
+    const rad = Math.max(1, Math.floor(ringWpx * 0.22));
+    const smp = (x: number, y: number) => sampleAt(data, w, h, x, y, rad);
+
+    // 2) the marker's angular centroid, measured to a fraction of a slot.
+    //    Integer-slot alignment is not enough: half a wedge out and every
+    //    sample lands in the gaps between wedges.
+    const isMarker = (rgb: [number, number, number]) =>
+      classify(rgb[0], rgb[1], rgb[2], PALETTE as unknown as number[][]) === MARKER;
+    const th0 = findMarkerAngle(e, rhoOf(0), S, smp, isMarker);
+    if (th0 === null) return "corrupt";
+
+    // 3) anchor the slot grid on the marker. Slot k' is counted from it, so
+    //    the unknown camera rotation AND the frame's own phase both cancel:
+    //    sector = (k' - ring*SPIRAL) mod S, with no phase term at all.
+    const angle = (kp: number) => th0 + kp * slotSpan;
+    const secOf = (ring: number, kp: number) => (((kp - ring * SPIRAL) % S) + S) % S;
+    const at = (ring: number, kp: number) => {
+      const [x, y] = polarToImage(e, rhoOf(ring), angle(kp));
+      return smp(x, y);
+    };
+
+    // 4) per-frame classifier from the calibration ring
     const sums: number[][] = Array.from({ length: 8 }, () => [0, 0, 0, 0]);
-    for (let k = 0; k < S; k++) {
-      const j = sectorAt(g, g.rings - 1, k, phase);
-      const s = sums[j % 8]!;
-      const [r, gr, b] = sampleRing(img, g.rings - 1, k);
+    for (let kp = 0; kp < S; kp++) {
+      const s = sums[secOf(g.rings - 1, kp) % 8]!;
+      const [r, gr, b] = at(g.rings - 1, kp);
       s[0]! += r;
       s[1]! += gr;
       s[2]! += b;
       s[3]! += 1;
     }
     const centroids = sums.map((s) => [s[0]! / s[3]!, s[1]! / s[3]!, s[2]! / s[3]!]);
-    // 3) data cells
+
+    // 5) data cells
     const cells = new Uint8Array(dataRings(g) * S);
     for (let ring = 1; ring < g.rings - 1; ring++) {
-      for (let k = 0; k < S; k++) {
-        const j = sectorAt(g, ring, k, phase);
-        const [r, gr, b] = sampleRing(img, ring, k);
-        cells[(ring - 1) * S + j] = classify(r, gr, b, centroids);
+      for (let kp = 0; kp < S; kp++) {
+        const [r, gr, b] = at(ring, kp);
+        cells[(ring - 1) * S + secOf(ring, kp)] = classify(r, gr, b, centroids);
       }
     }
     const bytes = cellsToBytes(cells, g);
@@ -191,9 +206,27 @@ function run() {
     return decoder.framesNew > before ? "ok" : "dup";
   };
 
+  // Camera presets. "off" still runs the full locator against the pristine
+  // canvas — the decoder never gets to assume it knows where the symbol is.
+  const CAMS: Record<string, { out: number; tilt: number; rotate: number; fill: number; blur: number } | null> = {
+    off: null,
+    square: { out: 720, tilt: 0.05, rotate: 0.35, fill: 0.86, blur: 1 },
+    tilted: { out: 720, tilt: 0.35, rotate: 1.1, fill: 0.72, blur: 1 },
+    harsh: { out: 540, tilt: 0.55, rotate: 2.4, fill: 0.6, blur: 2 },
+  };
+  const cam = CAMS[cfg("cfg-cam")] ?? null;
+  camStage.style.display = cam ? "block" : "none";
+  if (cam) {
+    camCanvas.width = cam.out;
+    camCanvas.height = cam.out;
+    camCanvas.style.width = `${Math.min(420, cam.out)}px`;
+    camCanvas.style.height = camCanvas.style.width;
+  }
+
   let seq = 0;
   let ok = 0;
   let corrupt = 0;
+  let lost = 0;
   let renderMs = 0;
   let decodeMs = 0;
   const t0 = performance.now();
@@ -210,25 +243,40 @@ function run() {
     let t = performance.now();
     render(seq, cells);
     renderMs += performance.now() - t;
+
     t = performance.now();
-    const res = decodeFrame();
+    let img = ctx.getImageData(0, 0, size, size);
+    if (cam) {
+      img = photograph(img, { ...cam, chroma420: true, noise });
+      camCtx.putImageData(img, 0, 0);
+    } else if (noise > 0) {
+      // keep the old knob meaningful when no camera is simulated
+      for (let p = 0; p < img.data.length; p += 4) {
+        for (let c = 0; c < 3; c++) {
+          img.data[p + c] = img.data[p + c]! + (Math.random() * 2 - 1) * noise;
+        }
+      }
+    }
+    const res = decodeFrame(img.data, img.width, img.height);
     decodeMs += performance.now() - t;
     if (res === "ok") ok++;
     else if (res === "corrupt") corrupt++;
+    else if (res === "lost") lost++;
     seq++;
     const elapsed = (performance.now() - t0) / 1000;
     statusEl.textContent =
       `${decoder.framesNew}/${Math.ceil(encoder.k * 1.18)} frames · ${ok} ok · ${corrupt} corrupt · ` +
-      `render ${(renderMs / seq).toFixed(1)} ms · decode ${(decodeMs / seq).toFixed(1)} ms · ` +
-      `raw ${rawKBs.toFixed(0)} KB/s`;
+      `${lost} not found · render ${(renderMs / seq).toFixed(1)} ms · ` +
+      `decode ${(decodeMs / seq).toFixed(1)} ms · raw ${rawKBs.toFixed(0)} KB/s`;
     if (decoder.isComplete) {
       const out = decoder.assemble()!;
       const verified = fnv1a(out) === header.payloadFnv;
       const goodput = payloadLen / 1024 / elapsed;
       logEl.textContent =
-        `${size}px ${g.rings}r×${S}s (${cap} B/frame, block ${blockLen}) @ ${fps} fps noise±${noise} → ` +
+        `${size}px ${g.rings}r×${S}s (${cap} B/frame, block ${blockLen}) @ ${fps} fps ` +
+        `noise±${noise} cam:${cfg("cfg-cam")} → ` +
         `${(payloadLen / 1024).toFixed(0)} KB in ${elapsed.toFixed(1)} s · ${goodput.toFixed(1)} KB/s · ` +
-        `${corrupt} corrupt frames · hash ${verified ? "verified ✓" : "MISMATCH ✗"}\n${logEl.textContent}`;
+        `${corrupt} corrupt · ${lost} not found · hash ${verified ? "verified ✓" : "MISMATCH ✗"}\n${logEl.textContent}`;
       stop(`done — ${verified ? "verified ✓" : "MISMATCH ✗"}`);
     }
   }, 1000 / fps);

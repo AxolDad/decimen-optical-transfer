@@ -22,13 +22,24 @@
       <li><b>Nothing below it changed.</b> The fountain, protocol and envelope stack underneath is the same code the QR path uses.</li>
     </ul>
 
-    <h2>What this page does and does not prove</h2>
+    <h2>Can a camera actually decode it?</h2>
+    <p>
+      The decoder no longer knows where the symbol is. It finds the mandala by
+      image moments, fits an ellipse, and recovers rotation from the sync
+      marker — so <em>simulated camera</em> below is a real test, not a
+      redraw. Measured with the settings on this page:
+    </p>
     <ul>
-      <li><b>Loopback only.</b> Encoder and decoder run in the same tab against synthetic samples, which measures the symbology and nothing else.</li>
-      <li><b>Verified so far:</b> geometries up to 2160 px, and zero corrupt frames at ±35 per channel of sample noise.</li>
-      <li><b>Not verified:</b> anything involving a lens. Camera optics, rolling shutter and white balance are exactly where a colour channel is most likely to fail.</li>
-      <li><b>Still an experiment</b> until a camera-in-the-loop spike says otherwise. Measurements, the 4K ceiling maths and the five open gaps are in <code>docs/KALEIDOSCOPE.md</code>.</li>
+      <li><b>Square on: yes.</b> 128 KB byte-exact through perspective placement, arbitrary rotation, blur and 4:2:0 chroma. 76 frames corrupted out of ~1050, all absorbed by the fountain.</li>
+      <li><b>4:2:0 chroma subsampling is not the blocker.</b> 6/6 frames decode with it on <em>and</em> off at this wedge size — the failure the design notes feared most turns out not to bite here.</li>
+      <li><b>Tilt is the blocker.</b> 6/6 square on, 2/6 once the far edge is 3% shorter than the near edge, 0/6 beyond that. A barely perceptible tilt kills it.</li>
+      <li><b>Why:</b> moments fit an <em>affine</em> model, which covers rotation, scale and position exactly. True perspective makes concentric circles non-concentric ellipses, and that assumption breaks. It needs a conic fit and a real homography — the first of the open gaps, not a tuning problem.</li>
+      <li><b>So: a phone on a tripod, square to the screen, would work today.</b> A phone in your hand would not.</li>
     </ul>
+    <p>
+      Full measurements, the 4K ceiling maths and the remaining gaps are in
+      <code>docs/KALEIDOSCOPE.md</code>.
+    </p>
 
     <details class="settings" open>
       <summary>Configuration</summary>
@@ -76,6 +87,15 @@
           </select>
         </label>
         <label>
+          simulated camera
+          <select id="cfg-cam">
+            <option value="off" selected>off — pristine pixels</option>
+            <option value="square">phone, square on</option>
+            <option value="tilted">phone, tilted</option>
+            <option value="harsh">phone, harsh angle</option>
+          </select>
+        </label>
+        <label>
           payload
           <select id="cfg-payload">
             <option value="131072" selected>128 KB</option>
@@ -95,6 +115,12 @@
 
     <div class="hint" id="status">idle</div>
     <div class="stage dark"><canvas id="wheel" width="16" height="16"></canvas></div>
+    <div class="hint" id="cam-stage" style="display: none">
+      what the simulated camera sees — perspective, 4:2:0 chroma, blur, noise
+      <div class="stage dark" style="margin-top: 0.5rem">
+        <canvas id="cam" width="16" height="16"></canvas>
+      </div>
+    </div>
     <pre id="log"></pre>
 
     <script type="module" src="./main.ts"></script>

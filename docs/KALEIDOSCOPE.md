@@ -1,6 +1,7 @@
 # Kaleidoscope symbology — exploration notes
 
-**Status: working loopback experiment** (`/kaleido/`), not a production transport.
+**Status: decodes through a simulated camera, square on** (`/kaleido/`), not yet a
+production transport — a tilted view still fails. See the camera-path section below.
 The question explored: can the stream be *beautiful* — "a whole abstract kaleidoscope
 of color" at 30 fps toward 4K — instead of a flickering QR code, without giving up the
 architecture that makes this project work?
@@ -66,23 +67,57 @@ For scale: the QR path's 2×2 grid preset is 169 KB/s raw today, camera-proven
 end-to-end. The kaleidoscope only *wins* at the denser rows — which are exactly the
 rows where the unsolved camera problems live.
 
-## The gap between loopback and a camera (why this stays an experiment)
+## Camera path — measured, not assumed
 
-1. **Geometry recovery.** Loopback knows the exact center/radius; a camera needs
-   fiducials + homography (the sync/calibration rings help, but corner-precision pose
-   estimation is real work — this is most of what libcimbar is).
-2. **Chroma subsampling.** Phone camera pipelines deliver 4:2:0 — color resolution is
-   HALF the luma resolution. Color cells must be ≥2 chroma samples wide, which caps
-   density well below what loopback suggests. (The QR path is immune: luma-only.)
-3. **Rolling shutter × rotation.** The design already rotates in whole-sector jumps
-   per frame (not continuously), so mid-exposure smear matches the QR path's frame-
-   transition problem rather than being strictly worse — but it needs verifying.
-4. **Display/camera color transfer.** Gamut mapping, white balance, auto-exposure
-   clipping the white wedges. The per-frame calibration ring exists for this; whether
-   8 colors survive a sunlit phone screen is an empirical question.
-5. **In-frame FEC.** One misread wedge currently kills a whole frame (FNV discard).
-   Fine at loopback error rates; a camera will want Reed-Solomon inside the frame so
-   symbol errors degrade gracefully instead of binarily.
+`kaleido/locate.ts` + `kaleido/camera.ts` close the loop that used to be open. The
+decoder no longer samples the coordinates it drew to: it finds the mandala by image
+moments, fits an ellipse, takes the outer rim from the projected-extent histogram, and
+recovers rotation from the sync marker's angular centroid. `camera.ts` then degrades a
+frame the way a phone does — perspective placement, 4:2:0 chroma subsampling, optical
+blur, sensor noise — before the decoder sees it.
+
+| condition | result |
+|---|---|
+| pristine pixels, locator path | 128 KB verified ✓, 0 corrupt |
+| simulated phone, **square on** (rotation, blur, 4:2:0) | **128 KB verified ✓**, 76 corrupt of ~1050, fountain absorbed them |
+| 4:2:0 chroma on vs off, square on | 6/6 vs 6/6 — **no measurable difference** |
+| tilt: far edge 3% shorter | 2/6 frames |
+| tilt: beyond that | 0/6 |
+
+Two findings worth stating plainly.
+
+**Chroma subsampling is not the blocker.** It was the gap flagged as structural rather
+than solvable, because the QR path is luma-only and immune. At 26×64 wedges it costs
+nothing measurable. That does not clear it at higher densities — it is exactly the
+constraint that will bind when wedges shrink toward the ceiling table above — but the
+current geometry is nowhere near it.
+
+**Perspective is the blocker, and it bites immediately.** Moments fit an *affine*
+model, which handles rotation, scale and translation exactly and cheaply. A true
+homography maps concentric circles to *non-concentric* ellipses, so the assumption that
+one ellipse plus a radius fraction locates every ring fails as soon as the view is off
+square. A barely perceptible tilt is enough.
+
+The fix is a proper conic fit (5-parameter ellipse) on two known rings, solving for the
+homography from the concentric-circle constraint, rather than a single moment-derived
+ellipse. That is real work, and it is the honest form of the "geometry recovery" gap
+this document already listed first.
+
+## Remaining gaps
+
+1. **Perspective / homography.** As above. The one thing standing between the current
+   state and a handheld phone.
+2. **Rolling shutter × rotation.** The design rotates in whole-sector jumps rather than
+   continuously, so mid-exposure smear should resemble the QR path's frame-transition
+   problem rather than being worse. Unverified.
+3. **Display/camera colour transfer.** Gamut, white balance, auto-exposure clipping the
+   white wedges. The per-frame calibration ring exists for this and reconstructed the
+   palette exactly under simulation, but a sunlit phone screen is a different question.
+4. **In-frame FEC.** One misread wedge still kills a whole frame via FNV discard. The
+   simulated camera produced 76 such frames in a successful run; a real one will produce
+   more, and Reed-Solomon inside the frame would make those degrade gracefully instead
+   of binarily.
+5. **Chroma at density.** Not binding now; will bind as wedges shrink.
 
 ## Verdict & next steps
 
