@@ -3,16 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — bench</title>
+    <title>Decimen — bench</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Loopback Bench (no camera)</small></h1>
-    <div class="hint">
+    <h1>Decimen <small>loopback bench</small></h1>
+
+    <p class="lede">
       Runs the real encode → QR → zxing-worker → fountain pipeline against
-      synthetic frames, on this device's CPU. Use it to A/B decoder settings
-      and measure decode-bound goodput without holding a phone at a screen.
-    </div>
+      synthetic frames on this device's CPU. No camera, no second device.
+    </p>
+
+    <ul>
+      <li><b>Finds the decode ceiling</b> for whatever hardware you open it on, which is the number that caps everything else.</li>
+      <li><b>Answers optics or CPU.</b> If a real transfer is slow but the bench is fast, the problem is how you're holding the phone.</li>
+      <li><b>A/B tests decoder settings</b> without the variance a handheld camera adds to every measurement.</li>
+      <li><b>Open it on the receiving device.</b> A laptop's numbers say nothing useful about a phone's.</li>
+    </ul>
+
     <details class="settings" open>
       <summary>Configuration</summary>
       <div class="row">
@@ -95,17 +103,21 @@
           </select>
         </label>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        "tight crop" measures pure decode cost (≈ a future ROI-cropped
-        receiver); the big frames reproduce today's full-capture decode.
-        Frame synthesis runs on the main thread, so with many fast workers
-        the pipeline can be generation-bound — the report says when it was.
-      </div>
+      <ul style="padding-top: 0.85rem">
+        <li><b>tight crop</b> measures pure decode cost, matching a receiver that has already locked on and is cropping to the code.</li>
+        <li><b>1280 and 1920</b> reproduce full-capture decode, before a lock narrows the search.</li>
+        <li><b>Frame synthesis runs on the main thread</b>, so with many fast workers the pipeline can be generation-bound rather than decode-bound. The report says which it was.</li>
+      </ul>
     </details>
-    <button id="run">Run</button>
+
+    <div class="actions">
+      <button id="run">Run</button>
+    </div>
+
     <div class="hint" id="status">idle</div>
     <div class="progress" id="progress" style="display: none"><div id="bar"></div></div>
-    <pre id="log" style="text-align: left; font-size: 12px; overflow-x: auto"></pre>
+    <pre id="log"></pre>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

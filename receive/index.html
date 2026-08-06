@@ -43,14 +43,12 @@
           </select>
         </label>
       </div>
-      <div class="hint" style="padding-top: 0.85rem">
-        Set these before starting the camera. 1280-wide is the widest mode iOS
-        runs at a true 60 fps, and the frame rate is demanded with
-        <code>exact</code> first because <code>ideal: 60</code> silently
-        delivers 30. Workers "auto" is CPU cores − 1, capped at 4. After the
-        first decode the pipeline crops to the code's neighbourhood (the
-        <em>roi</em> readout) and decoding gets about 3× faster.
-      </div>
+      <ul style="padding-top: 0.85rem">
+        <li><b>Set these before starting the camera.</b> They apply when the stream opens.</li>
+        <li><b>1280 is the widest mode iOS runs at a true 60 fps.</b> The rate is demanded with <code>exact</code> first, because <code>ideal: 60</code> silently delivers 30.</li>
+        <li><b>Workers "auto"</b> is CPU cores − 1, capped at 4.</li>
+        <li><b>After the first decode the pipeline crops</b> to the code's neighbourhood, the <em>roi</em> readout, and decoding gets about 3× faster.</li>
+      </ul>
     </details>
 
     <div class="actions">

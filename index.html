@@ -46,24 +46,17 @@
     </nav>
 
     <h2>Why it survives a channel this bad</h2>
-    <p>
-      A screen-to-camera link has no back-channel: the receiver cannot ask for
-      a frame again, and it will miss plenty of them to blur, refresh
-      straddling and autofocus hunting. So no frame is any particular part of
-      the file. Each one is a fountain-coded combination of a random subset of
-      blocks, and collecting <em>any</em> sufficient number of them, in any
-      order, reconstructs the original. Dropped frames cost a little time
-      and never cost correctness. The two devices never even agree on a frame rate.
-    </p>
+    <ul>
+      <li><b>There is no back-channel.</b> The receiver cannot ask for a frame again, and it will miss plenty of them to blur, refresh straddling and autofocus hunting.</li>
+      <li><b>So no frame is any particular part of the file.</b> Each one is a fountain-coded combination of a random subset of blocks.</li>
+      <li><b>Any sufficient number of them will do</b>, in any order. Collect enough and the original falls out.</li>
+      <li><b>Dropped frames cost time, never correctness.</b> The two devices never even agree on a frame rate.</li>
+    </ul>
 
     <h2>Also here</h2>
-    <p>
-      <a href="./bench/">Bench</a> runs the whole pipeline camera-free to
-      measure a device's decode ceiling, which is the honest way to find out
-      whether the optics or the CPU is the limit.
-      <a href="./kaleido/">Kaleidoscope</a> is an experiment that draws the
-      same fountain stream as a rotating mandala of coloured wedges instead of
-      QR codes.
-    </p>
+    <ul>
+      <li><b><a href="./bench/">Bench</a></b> runs the whole pipeline camera-free to measure a device's decode ceiling, which is the honest way to find out whether the optics or the CPU is the limit.</li>
+      <li><b><a href="./kaleido/">Kaleidoscope</a></b> draws the same fountain stream as a rotating mandala of coloured wedges instead of QR codes. Still an experiment.</li>
+    </ul>
   </body>
 </html>

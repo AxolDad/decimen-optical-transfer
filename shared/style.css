@@ -155,6 +155,74 @@ p,
   font-size: var(--t-body);
 }
 
+/* Bulleted wherever the content is genuinely a set of independent facts.
+   A reader operating an instrument takes one line at a time; a clause chain
+   makes them hold three things in their head to reach the fourth. */
+ul {
+  width: min(100%, var(--measure));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Block, not grid or flex. A bullet's content is inline — a bold lead-in
+   followed by a text run — and both grid and flex would promote each of
+   those to a separate item, dropping the prose into the marker column one
+   word at a time. The marker is positioned out of flow instead. */
+li {
+  position: relative;
+  padding-left: 1.15rem;
+  color: var(--muted);
+  font-size: var(--t-small);
+  text-wrap: pretty;
+}
+
+/* A square tick rather than a disc: it belongs to the same drawing as the
+   hairlines and the readouts. */
+li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 4px;
+  height: 4px;
+  background: var(--dim);
+  border-radius: 1px;
+}
+
+/* The lead-in names the thing before explaining it, so the eye can skip the
+   rest of the line once it has found the one it wants. */
+li b,
+li strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- machine output -------------------------------------------------- */
+
+pre {
+  width: min(100%, var(--measure));
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--ink-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+/* No empty panel sitting there before the first run. */
+pre:empty {
+  display: none;
+}
+
 a {
   color: var(--text);
   text-decoration-color: color-mix(in oklab, var(--signal) 60%, transparent);
@@ -349,6 +417,12 @@ code {
 .stage canvas {
   display: block;
   image-rendering: pixelated;
+}
+
+/* The kaleidoscope draws colour on dark, so its surround is dark too. A QR
+   quiet zone has to be white; a mandala does not. */
+.stage.dark {
+  background: #0a0906;
 }
 
 /* ---- camera preview -------------------------------------------------- */

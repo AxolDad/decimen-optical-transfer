@@ -3,18 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — kaleidoscope experiment</title>
+    <title>Decimen — kaleidoscope</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Kaleidoscope Symbology (EXPERIMENT)</small></h1>
-    <div class="hint">
-      The same fountain stream, drawn as a spinning mandala of colored wedges
-      instead of QR codes — 3 bits per wedge, sync by rotation, per-frame
-      color calibration ring. This page runs encoder and decoder in loopback
-      (no camera) to measure what the symbology is worth; the camera path is
-      future work. See <code>docs/KALEIDOSCOPE.md</code>.
-    </div>
+    <h1>Decimen <small>kaleidoscope · experiment</small></h1>
+
+    <p class="lede">
+      The same fountain stream, drawn as a spinning mandala of coloured wedges
+      instead of QR codes.
+    </p>
+
+    <h2>How the symbology works</h2>
+    <ul>
+      <li><b>3 bits per wedge</b>, from an 8-colour palette chosen for maximum separation under a camera's white balance.</li>
+      <li><b>Rotation is the clock.</b> The innermost ring carries one marker wedge whose angular position <em>is</em> the frame phase, so no frame counter is needed.</li>
+      <li><b>The outer ring is a calibration strip</b> carrying all 8 palette colours, so the decoder rebuilds its classifier from every single frame rather than trusting a fixed threshold.</li>
+      <li><b>Nothing below it changed.</b> The fountain, protocol and envelope stack underneath is the same code the QR path uses.</li>
+    </ul>
+
+    <h2>What this page does and does not prove</h2>
+    <ul>
+      <li><b>Loopback only.</b> Encoder and decoder run in the same tab against synthetic samples, which measures the symbology and nothing else.</li>
+      <li><b>Verified so far:</b> geometries up to 2160 px, and zero corrupt frames at ±35 per channel of sample noise.</li>
+      <li><b>Not verified:</b> anything involving a lens. Camera optics, rolling shutter and white balance are exactly where a colour channel is most likely to fail.</li>
+      <li><b>Still an experiment</b> until a camera-in-the-loop spike says otherwise. Measurements, the 4K ceiling maths and the five open gaps are in <code>docs/KALEIDOSCOPE.md</code>.</li>
+    </ul>
+
     <details class="settings" open>
       <summary>Configuration</summary>
       <div class="row">
@@ -68,17 +83,20 @@
           </select>
         </label>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Innermost ring: rotation sync (the marker wedge's position IS the
-        frame phase). Outermost ring: all 8 palette colors — the decoder
-        rebuilds its classifier from it every frame. Noise adds ±N per RGB
-        channel at sample time to probe classification margins.
-      </div>
+      <ul style="padding-top: 0.85rem">
+        <li><b>rings × sectors</b> sets the wedge count, and therefore bytes per frame. More wedges means smaller targets for the classifier.</li>
+        <li><b>sample noise</b> adds ±N per RGB channel at sample time, to probe how much margin the classifier actually has before colours start colliding.</li>
+      </ul>
     </details>
-    <button id="run">Run loopback</button>
+
+    <div class="actions">
+      <button id="run">Run loopback</button>
+    </div>
+
     <div class="hint" id="status">idle</div>
-    <div class="stage" style="background: #0a0906"><canvas id="wheel" width="16" height="16"></canvas></div>
-    <pre id="log" style="text-align: left; font-size: 12px; overflow-x: auto"></pre>
+    <div class="stage dark"><canvas id="wheel" width="16" height="16"></canvas></div>
+    <pre id="log"></pre>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
