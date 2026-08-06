@@ -9,12 +9,15 @@
 //
 // What it does:
 //   1. exports a sealed clip through the real OpticalSender (YouTube preset)
-//   2. re-encodes it with ffmpeg at each rung of a YouTube-like ladder
+//   2. re-encodes it with ffmpeg across YouTube's delivery codecs (AV1 and
+//      VP9 as of 2026) at each rung of a resolution/bitrate ladder
 //   3. feeds each re-encoded file back through the real OpticalReceiver
 //   4. reports which rungs still reconstruct the file byte-exact
 //
-// The answer we want is not just pass/fail but the LOWEST rung that survives
-// — that is the honest guidance to give a user ("keep it at 1080p or above").
+// The answer we want is not pass/fail but the SAFE FLOOR: the shallowest rung
+// that every delivered codec still survives, since a viewer does not choose
+// which rendition they get. That is the honest guidance to hand a user
+// ("download at 1080p or better").
 //
 // Run:
 //   npm run build:lib
@@ -36,14 +39,51 @@ const FFMPEG = process.env.FFMPEG ?? "/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux"
 const DIST = process.env.DIST_LIB ?? "dist-lib";
 const WORK = join(DIST, "transcode-test");
 
-// YouTube's published VP9 ladder, roughly. Each rung is what a viewer might
-// actually download — the clip has to survive the one they get.
+// Rungs in VP9 bitrates (kbps-ish strings ffmpeg understands). A viewer gets
+// ONE of these, so the clip has to survive whichever one they're served.
 const LADDER = [
-  { name: "2160p", height: 2160, bitrate: "20M" },
-  { name: "1440p", height: 1440, bitrate: "9M" },
-  { name: "1080p", height: 1080, bitrate: "4500k" },
-  { name: "720p", height: 720, bitrate: "2500k" },
-  { name: "480p", height: 480, bitrate: "1200k" },
+  { name: "2160p", height: 2160, vp9: 20000 },
+  { name: "1440p", height: 1440, vp9: 9000 },
+  { name: "1080p", height: 1080, vp9: 4500 },
+  { name: "720p", height: 720, vp9: 2500 },
+  { name: "480p", height: 480, vp9: 1200 },
+];
+
+// As of 2026 YouTube delivers AV1 as its primary codec (VP9 remains the
+// fallback and is still produced for 4K), so a test that only exercised VP9
+// would be measuring a rendition many viewers never receive. AV1 also runs
+// ~20% BELOW VP9 for equivalent perceptual quality — fewer bits spent on
+// exactly the sharp black/white edges QR decoding depends on — so it is
+// plausibly the harsher case and must be covered.
+//
+// `scale` converts the VP9 rung bitrate to each codec's equivalent.
+const FAMILIES = [
+  {
+    key: "AV1",
+    scale: 0.8,
+    representative: true,
+    note: "YouTube's primary delivery codec",
+    candidates: [
+      { codec: "libsvtav1", ext: "mp4", extra: ["-preset", "8"] },
+      { codec: "libaom-av1", ext: "mp4", extra: ["-cpu-used", "8", "-row-mt", "1"] },
+    ],
+  },
+  {
+    key: "VP9",
+    scale: 1.0,
+    representative: true,
+    note: "fallback rendition, still produced for 4K",
+    candidates: [
+      { codec: "libvpx-vp9", ext: "webm", extra: ["-row-mt", "1", "-deadline", "good", "-cpu-used", "2"] },
+    ],
+  },
+  {
+    key: "H.264",
+    scale: 1.6, // needs more bits for the same quality
+    representative: false,
+    note: "NOT what YouTube delivers at these resolutions — indicative only",
+    candidates: [{ codec: "libx264", ext: "mp4", extra: ["-preset", "medium", "-profile:v", "high"] }],
+  },
 ];
 
 const ff = (args) =>
@@ -52,13 +92,15 @@ const ff = (args) =>
     maxBuffer: 1 << 30,
   });
 
-/** Pick a VP9 encoder if this ffmpeg has one, else fall back to H.264. */
-function pickEncoder() {
+/** Every codec family this ffmpeg build can actually produce. */
+function availableFamilies() {
   const out = execFileSync(FFMPEG, ["-hide_banner", "-encoders"], { encoding: "utf8" });
-  if (out.includes("libvpx-vp9")) return { codec: "libvpx-vp9", ext: "webm" };
-  if (out.includes("libx264")) return { codec: "libx264", ext: "mp4" };
-  if (out.includes("libvpx")) return { codec: "libvpx", ext: "webm" };
-  throw new Error("no usable video encoder in this ffmpeg build");
+  const found = [];
+  for (const fam of FAMILIES) {
+    const hit = fam.candidates.find((c) => out.includes(c.codec));
+    if (hit) found.push({ ...fam, ...hit });
+  }
+  return found;
 }
 
 const results = [];
@@ -66,8 +108,19 @@ const results = [];
 async function main() {
   if (!existsSync(FFMPEG)) throw new Error(`ffmpeg not found at ${FFMPEG} (set FFMPEG=)`);
   mkdirSync(WORK, { recursive: true });
-  const enc = pickEncoder();
-  console.log(`ffmpeg: ${FFMPEG}\nencoder: ${enc.codec} (.${enc.ext})\n`);
+  const families = availableFamilies();
+  if (families.length === 0) throw new Error("no usable video encoder in this ffmpeg build");
+  const version = execFileSync(FFMPEG, ["-version"], { encoding: "utf8" }).split("\n")[0];
+  console.log(`ffmpeg: ${FFMPEG}\n  ${version}`);
+  console.log(`codecs: ${families.map((f) => `${f.key} (${f.codec})`).join(", ")}`);
+  if (!families.some((f) => f.representative)) {
+    console.log(
+      "\n  ⚠ WARNING: this ffmpeg has neither AV1 nor VP9. YouTube delivers those,\n" +
+        "    so the result below does NOT tell you whether the feature survives\n" +
+        "    YouTube. Install a full ffmpeg (9.0 'Lei', 2026-08-04) and re-run.",
+    );
+  }
+  console.log();
 
   const browser = await chromium.launch({ executablePath: EXE });
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
@@ -119,29 +172,32 @@ async function main() {
       `${exported.plan.framesPerCode} video frames per code\n`,
   );
 
-  // ---- 2 & 3. transcode each rung, then decode it back ----
-  for (const rung of LADDER) {
-    const out = join(WORK, `rung-${rung.name}.${enc.ext}`);
-    process.stdout.write(`${rung.name} @ ${rung.bitrate}: transcoding… `);
+  // ---- 2 & 3. transcode each rung of each codec, then decode it back ----
+  for (const fam of families) {
+   console.log(`--- ${fam.key} (${fam.codec}) — ${fam.note} ---`);
+   for (const rung of LADDER) {
+    const kbps = Math.round(rung.vp9 * fam.scale);
+    const tag = `${fam.key}-${rung.name}`;
+    const out = join(WORK, `rung-${tag}.${fam.ext}`);
+    process.stdout.write(`  ${rung.name} @ ${kbps}k: transcoding… `);
     try {
       ff([
         "-i", master,
-        "-c:v", enc.codec,
-        "-b:v", rung.bitrate,
+        "-c:v", fam.codec,
+        "-b:v", `${kbps}k`,
         "-vf", `scale=-2:${rung.height}`,
         "-pix_fmt", "yuv420p", // what every platform delivers
         "-r", "30",
-        ...(enc.codec === "libvpx-vp9" ? ["-row-mt", "1", "-deadline", "good", "-cpu-used", "2"] : []),
-        ...(enc.codec === "libx264" ? ["-preset", "medium", "-profile:v", "high"] : []),
+        ...fam.extra,
         out,
       ]);
     } catch (err) {
       console.log(`FFMPEG FAILED — ${err.message.split("\n")[0]}`);
-      results.push({ ...rung, ok: false, note: "transcode failed" });
+      results.push({ family: fam.key, ...rung, kbps, ok: false, note: "transcode failed" });
       continue;
     }
     process.stdout.write("decoding… ");
-    const url = `/transcode-test/rung-${rung.name}.${enc.ext}`;
+    const url = `/transcode-test/rung-${tag}.${fam.ext}`;
     const res = await page.evaluate(
       async ({ url, key, want }) => {
         const lib = window.DecimenLib;
@@ -177,24 +233,70 @@ async function main() {
         ? `DECODED ✓ (${res.seconds.toFixed(1)}s, byte-exact)`
         : `failed — ${res.err ?? "content mismatch"} (peak ${res.peakFrames} frames)`,
     );
-    results.push({ ...rung, ok, peakFrames: res.peakFrames, note: res.err ?? "" });
+    results.push({ family: fam.key, ...rung, kbps, ok, peakFrames: res.peakFrames, note: res.err ?? "" });
+   }
+   console.log();
   }
 
   await browser.close();
 
   // ---- 4. the verdict ----
-  console.log("\n=== transcode survival ===");
-  for (const r of results) {
-    console.log(`  ${r.name.padEnd(7)} ${r.bitrate.padEnd(7)} ${r.ok ? "SURVIVES" : "fails"}${r.note ? ` (${r.note})` : ""}`);
-  }
-  const survivors = results.filter((r) => r.ok);
-  if (survivors.length === 0) {
-    console.log("\nNo rung survived. The YouTube preset does NOT currently work end to end.");
-  } else {
+  console.log("=== transcode survival ===");
+  for (const fam of families) {
+    const mine = results.filter((r) => r.family === fam.key);
+    const survivors = mine.filter((r) => r.ok);
     const lowest = survivors[survivors.length - 1];
-    console.log(`\nLowest surviving rung: ${lowest.name}. Tell users to download at ${lowest.name} or better.`);
+    console.log(
+      `  ${fam.key.padEnd(6)} ${
+        survivors.length === 0
+          ? "NOTHING SURVIVES"
+          : `survives down to ${lowest.name} (${lowest.kbps}k)`
+      }${fam.representative ? "" : "   [not a YouTube codec — indicative only]"}`,
+    );
+    for (const r of mine) {
+      console.log(`         ${r.name.padEnd(7)} ${String(r.kbps + "k").padEnd(7)} ${r.ok ? "ok" : `fail${r.note ? ` — ${r.note}` : ""}`}`);
+    }
   }
-  process.exit(survivors.length > 0 ? 0 : 1);
+
+  // The honest bar: it has to survive EVERY codec YouTube actually delivers,
+  // because a viewer doesn't choose which rendition they're served. So the
+  // guidance is the safe floor — the shallowest depth any real codec reached,
+  // not the deepest one some codec happened to manage.
+  console.log();
+  const reps = families.filter((f) => f.representative);
+  const perFamily = reps.map((f) => {
+    const oks = results.filter((r) => r.family === f.key && r.ok);
+    const deepest = oks.length === 0 ? -1 : LADDER.findIndex((l) => l.name === oks[oks.length - 1].name);
+    return { key: f.key, deepest };
+  });
+  let exitCode = 1;
+  if (reps.length === 0) {
+    console.log(
+      "VERDICT: inconclusive — this ffmpeg could not produce AV1 or VP9, the\n" +
+        "codecs YouTube delivers. Install a full ffmpeg and re-run.",
+    );
+  } else if (perFamily.some((p) => p.deepest === -1)) {
+    const dead = perFamily.filter((p) => p.deepest === -1).map((p) => p.key).join(" and ");
+    console.log(
+      `VERDICT: FAILS. Nothing survived ${dead}, which YouTube delivers — so a\n` +
+        "viewer served that rendition cannot recover the file at any resolution.\n" +
+        "The preset needs bigger modules, more redundancy, or both.",
+    );
+  } else {
+    const floor = LADDER[Math.min(...perFamily.map((p) => p.deepest))];
+    console.log(
+      `VERDICT: survives every codec YouTube delivers, down to ${floor.name}.\n` +
+        `Guidance to users: download at ${floor.name} or better.`,
+    );
+    exitCode = 0;
+  }
+  console.log(
+    "\nCaveat: YouTube uses per-title encoding, and bitrates at one resolution\n" +
+      "vary by >400% depending on content. A synthetic flashing-QR clip is\n" +
+      "nothing like natural video, so its real assigned bitrate could sit well\n" +
+      "outside this ladder. Only an actual upload settles it.",
+  );
+  process.exit(exitCode);
 }
 
 main().catch((err) => {
