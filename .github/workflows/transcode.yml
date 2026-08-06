@@ -1,0 +1,96 @@
+name: Transcode survival
+
+# Answers the one open question about "Encrypt for YouTube": does a sealed
+# clip still decode after a platform re-encodes it? Needs a full ffmpeg (AV1
+# + VP9) and a headless Chromium, which a GitHub runner has and a phone
+# doesn't — so this is the way to get the answer without a laptop.
+#
+# Runs automatically on pushes to the working branch that touch the pipeline,
+# and can be started by hand once this file reaches the default branch (the
+# "Run workflow" button only appears for workflows on the default branch).
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/repo-review-performance-0v45ve]
+    paths:
+      - "tests/e2e/transcode.e2e.mjs"
+      - "lib/**"
+      - "shared/**"
+      - "send/**"
+      - "receive/**"
+      - ".github/workflows/transcode.yml"
+
+jobs:
+  transcode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Install a full ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+          echo "encoders present:"
+          ffmpeg -hide_banner -encoders \
+            | grep -E "libsvtav1|libaom-av1|libvpx-vp9|libx264" || echo "  (none of the expected encoders!)"
+
+      - name: Install Chromium for Playwright
+        run: |
+          # match the browser build to the playwright-core already pinned in
+          # package.json, so executablePath() resolves to what we installed
+          PW=$(node -p "require('playwright-core/package.json').version")
+          npx --yes playwright@"$PW" install --with-deps chromium
+
+      - name: Build the library and stage the harness
+        run: |
+          npm run build:lib
+          cp tests/e2e/harness.html dist-lib/
+
+      - name: Serve the built library
+        run: |
+          # background process survives into later steps on the same runner
+          npx vite preview --outDir dist-lib --port 4174 &
+          for _ in $(seq 1 60); do
+            curl -sk https://localhost:4174/harness.html -o /dev/null && break
+            sleep 1
+          done
+          curl -sk https://localhost:4174/harness.html -o /dev/null \
+            && echo "preview server up" \
+            || { echo "preview server never came up"; exit 1; }
+
+      - name: Run the transcode survival test
+        run: |
+          export FFMPEG=$(which ffmpeg)
+          export CHROMIUM=$(node -p "require('playwright-core').chromium.executablePath()")
+          set +e
+          node tests/e2e/transcode.e2e.mjs 2>&1 | tee /tmp/transcode.log
+          code=${PIPESTATUS[0]}
+          set -e
+          # mirror the result into the run summary so it's readable on a phone
+          {
+            echo "## Transcode survival"
+            echo ""
+            echo '```'
+            cat /tmp/transcode.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      - name: Keep the master clip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sealed-master-clip
+          # the pre-transcode clip, plus the key printed in the log above:
+          # upload this to YouTube and decode the renditions back for the real
+          # end-to-end answer this synthetic ladder only approximates
+          path: dist-lib/transcode-test/master.webm
+          retention-days: 14
+          if-no-files-found: warn

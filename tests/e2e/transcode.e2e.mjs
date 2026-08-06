@@ -169,8 +169,13 @@ async function main() {
   writeFileSync(master, masterBytes);
   console.log(
     `  ${(masterBytes.length / 1024 / 1024).toFixed(1)} MB, ${exported.plan.seconds}s, ` +
-      `${exported.plan.framesPerCode} video frames per code\n`,
+      `${exported.plan.framesPerCode} video frames per code`,
   );
+  // Printed so the saved master.webm is actually usable: upload it to YouTube,
+  // download the renditions back, and decode them with this key for the real
+  // end-to-end answer this synthetic ladder only approximates. It protects
+  // nothing but throwaway test text.
+  console.log(`  test key (for a manual upload round-trip): ${exported.key}\n`);
 
   // ---- 2 & 3. transcode each rung of each codec, then decode it back ----
   for (const fam of families) {
