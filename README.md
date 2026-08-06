@@ -226,12 +226,14 @@ the file.
 Measured (`tests/e2e/transcode.e2e.mjs`, run in CI): a sealed 28 KB payload
 exported that way becomes 59 source blocks carried by ~160 codes, and after
 re-encoding through simulated **AV1**, **VP9** and H.264 bitrate ladders it
-decodes **byte-exact at every rung from 2160p down to 480p**. So the guidance
-is: download at 480p or better.
+comes back **byte-exact down to 240p**, breaking at 144p on all three codecs.
 
-The honest limit on that number: it simulates the codecs YouTube delivers, it
-is not a round-trip through YouTube. Real per-title encoding varies bitrate by
-over 400% at a single resolution, which a fixed ladder cannot reproduce.
+The number to actually use is **480p or better** — two rungs above the
+measured floor, on purpose. A measured floor is not a safe floor: each ladder
+rung is a single bitrate point, while YouTube's per-title encoding moves the
+real bitrate at a fixed resolution by more than 400%. And the ladder
+simulates the codecs YouTube delivers; it is not a round-trip through
+YouTube, which is the only thing that would settle it outright.
 
 Two honest caveats, also in the code comments: encryption hides content, not
 *existence* (a QR video is obviously a data stream), and ciphertext posted
@@ -252,7 +254,7 @@ see `tests/e2e/README.md`. They're separate from `npm test` because they
 need a browser and a preview server. `transcode.e2e.mjs` additionally needs a
 full ffmpeg: it re-encodes an exported clip through AV1/VP9/H.264 bitrate
 ladders and reports the shallowest rendition that still decodes byte-exact —
-which is where the "download at 480p or better" guidance above comes from.
+which is where the numbers above come from.
 
 The determinism goldens in `tests/` pin exact `dlog`/soliton/frame-index
 outputs — if a refactor or a JS engine shifts a single bit, they fail loudly
