@@ -129,22 +129,47 @@ async function main() {
   await page.goto(`${ORIGIN}/harness.html`, { waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 });
 
-  // A small payload keeps the clip short; the geometry (module size, code
-  // rate, redundancy) is what the test is actually about, not the duration.
-  const text = Array.from({ length: 150 }, (_, i) => `line ${i} :: ${(i * 2654435761) >>> 0}`).join("\n");
+  // The payload has to be big enough that the RESULT MEANS SOMETHING. A tiny
+  // file yields k≈2 source blocks, so the receiver needs ~2 good codes out of
+  // the whole video and passes even if the codec destroys 80% of frames —
+  // measuring nothing. (The first version of this test did exactly that and
+  // "passed" every rung in 0.6s per decode.)
+  //
+  // Sizing for k≈60: the fountain's design margin is the 2.4× overhead, i.e.
+  // it should survive losing ~58% of codes and fail past that. Any k has that
+  // same fractional tolerance, but small k is dominated by luck — only a large
+  // k makes the observed loss fraction concentrate enough to be evidence.
+  // Incompressible bytes keep the wire size predictable (deflate is skipped
+  // when it doesn't pay, so what we generate is what gets transmitted).
+  const PAYLOAD_BYTES = 28_000;
+  const PAYLOAD_SEED = 1234567;
+  const MIN_K = 40; // below this the test proves nothing — fail loudly instead
 
   // ---- 1. export a sealed clip through the real sender, YouTube preset ----
-  console.log("exporting a sealed clip (YouTube preset)…");
-  const exported = await page.evaluate(async (text) => {
+  console.log(`exporting a sealed clip (YouTube preset, ${PAYLOAD_BYTES} B payload)…`);
+  const exported = await page.evaluate(async ({ size, seed }) => {
     const lib = window.DecimenLib;
+    // deterministic pseudo-random bytes: incompressible, so the wire length
+    // (and therefore k) is predictable, and reproducible for verification
+    const makePayload = () => {
+      const out = new Uint8Array(size);
+      let s = seed;
+      for (let i = 0; i < size; i++) {
+        s = (s * 1103515245 + 12345) & 0x7fffffff;
+        out[i] = (s >>> 16) & 0xff;
+      }
+      return out;
+    };
     const key = lib.randomKeyHex();
     const canvas = document.createElement("canvas");
     document.body.append(canvas);
+    let info = null;
     const sender = new lib.OpticalSender({
       canvas,
-      payload: { bytes: new TextEncoder().encode(text), name: "sealed-note.txt", mime: "text/plain" },
+      payload: { bytes: makePayload(), name: "sealed-note.bin", mime: "application/octet-stream" },
       // the "Encrypt for YouTube" recipe, mirrored from send/main.ts
       targetFps: 8, frameBytes: 500, codes: 1, ecc: "Q", displayPx: 1200, encryptKey: key,
+      onReady: (i) => (info = i),
     });
     await sender.start();
     await new Promise((r) => setTimeout(r, 400));
@@ -161,20 +186,32 @@ async function main() {
     for (let i = 0; i < buf.length; i += CHUNK) {
       bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
     }
-    return { key, plan, b64: btoa(bin), mime: blob.type };
-  }, text);
+    return { key, plan, k: info?.k ?? 0, wire: info?.wireSize ?? 0, b64: btoa(bin), mime: blob.type };
+  }, { size: PAYLOAD_BYTES, seed: PAYLOAD_SEED });
 
   const master = join(WORK, "master.webm");
   const masterBytes = Buffer.from(exported.b64, "base64");
   writeFileSync(master, masterBytes);
+  const codesInClip = Math.round(exported.plan.seconds * 8);
   console.log(
     `  ${(masterBytes.length / 1024 / 1024).toFixed(1)} MB, ${exported.plan.seconds}s, ` +
       `${exported.plan.framesPerCode} video frames per code`,
   );
+  console.log(
+    `  k=${exported.k} source blocks from a ${exported.wire} B wire — the receiver needs\n` +
+      `  ~${exported.k} good codes out of the ~${codesInClip} in the clip, so it tolerates losing\n` +
+      `  roughly ${Math.round((1 - exported.k / codesInClip) * 100)}% of them before failing.`,
+  );
+  if (exported.k < MIN_K) {
+    throw new Error(
+      `k=${exported.k} is too small (need >= ${MIN_K}). At this size the fountain wins on ` +
+        `luck and the ladder result would be meaningless — raise PAYLOAD_BYTES.`,
+    );
+  }
   // Printed so the saved master.webm is actually usable: upload it to YouTube,
   // download the renditions back, and decode them with this key for the real
   // end-to-end answer this synthetic ladder only approximates. It protects
-  // nothing but throwaway test text.
+  // nothing but deterministic test bytes.
   console.log(`  test key (for a manual upload round-trip): ${exported.key}\n`);
 
   // ---- 2 & 3. transcode each rung of each codec, then decode it back ----
@@ -204,7 +241,7 @@ async function main() {
     process.stdout.write("decoding… ");
     const url = `/transcode-test/rung-${tag}.${fam.ext}`;
     const res = await page.evaluate(
-      async ({ url, key, want }) => {
+      async ({ url, key, size, seed, needK }) => {
         const lib = window.DecimenLib;
         const blob = await (await fetch(url)).blob();
         const file = new File([blob], "clip", { type: blob.type });
@@ -221,22 +258,32 @@ async function main() {
             // stall watchdog (no NEW frames) correctly gives up
             fileStallMs: 20_000,
             onStats: (s) => { peakFrames = Math.max(peakFrames, s.framesNew); },
-            onComplete: (f) => resolve({ ok: true, text: new TextDecoder().decode(f.bytes) }),
-            onError: (m) => resolve({ ok: false, err: m }),
+            onComplete: (f) => {
+              // regenerate the expected bytes and compare in-page, so a
+              // multi-KB payload never crosses the CDP bridge
+              let s = seed;
+              let exact = f.bytes.length === size;
+              for (let i = 0; exact && i < size; i++) {
+                s = (s * 1103515245 + 12345) & 0x7fffffff;
+                if (f.bytes[i] !== ((s >>> 16) & 0xff)) exact = false;
+              }
+              resolve({ ok: true, exact });
+            },
+            onError: (m) => resolve({ ok: false, exact: false, err: m }),
           });
           rx.start();
-          setTimeout(() => resolve({ ok: false, err: "hard timeout" }), 180_000);
+          setTimeout(() => resolve({ ok: false, exact: false, err: "hard timeout" }), 300_000);
         });
         video.remove();
-        return { ...out, peakFrames, seconds: (performance.now() - started) / 1000, exact: out.text === want };
+        return { ...out, peakFrames, needK, seconds: (performance.now() - started) / 1000 };
       },
-      { url, key: exported.key, want: text },
+      { url, key: exported.key, size: PAYLOAD_BYTES, seed: PAYLOAD_SEED, needK: exported.k },
     );
     const ok = res.ok && res.exact;
     console.log(
       ok
         ? `DECODED ✓ (${res.seconds.toFixed(1)}s, byte-exact)`
-        : `failed — ${res.err ?? "content mismatch"} (peak ${res.peakFrames} frames)`,
+        : `failed — ${res.err ?? "content mismatch"} (collected ${res.peakFrames}/${res.needK} frames)`,
     );
     results.push({ family: fam.key, ...rung, kbps, ok, peakFrames: res.peakFrames, note: res.err ?? "" });
    }
