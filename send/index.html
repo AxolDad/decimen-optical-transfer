@@ -121,9 +121,11 @@
       spans several video frames, high error-correction, and heavy fountain
       redundancy, rendered at 4K. The codec's damage lands on frames the
       fountain can spare — not on your file. Upload it, keep the key, and only
-      the key opens it. <em>(Robustness is tuned against simulated compression;
-      a real end-to-end YouTube round-trip hasn't been measured yet — treat it
-      as a durable second copy, not your only one.)</em>
+      the key opens it. <em>(Measured: a sealed clip re-encoded through
+      simulated AV1, VP9 and H.264 ladders decodes byte-exact at every rung
+      from 2160p down to 480p — so download at 480p or better. That simulates
+      the codecs YouTube delivers; it is not a YouTube round-trip. Treat it as
+      a durable second copy, not your only one.)</em>
     </div>
     <div class="hint">
       Max screen brightness helps. The stream loops forever — stop when the

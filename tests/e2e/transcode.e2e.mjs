@@ -1,11 +1,10 @@
 // TRANSCODE SURVIVAL TEST — does an "Encrypt for YouTube" clip still decode
 // after a video platform re-encodes it?
 //
-// This is the experiment the YouTube feature rests on, and until it runs the
-// feature's robustness is a hypothesis, not a measurement. Everything else
-// in the repo is verified against pristine frames; a real platform re-encodes
-// to its own codec and bitrate ladder, smearing exactly the sharp black/white
-// edges QR decoding depends on.
+// This is the experiment the YouTube feature rests on. Everything else in the
+// repo is verified against pristine frames; a real platform re-encodes to its
+// own codec and bitrate ladder, smearing exactly the sharp black/white edges
+// QR decoding depends on.
 //
 // What it does:
 //   1. exports a sealed clip through the real OpticalSender (YouTube preset)
@@ -17,7 +16,14 @@
 // The answer we want is not pass/fail but the SAFE FLOOR: the shallowest rung
 // that every delivered codec still survives, since a viewer does not choose
 // which rendition they get. That is the honest guidance to hand a user
-// ("download at 1080p or better").
+// ("download at 480p or better").
+//
+// The ladder deliberately runs PAST the bar it has to clear (see GATE). The
+// first valid run cleared every rung down to 480p, which established a lower
+// bound and nothing else: a ladder that never breaks doesn't tell you your
+// margin, only that you didn't push hard enough. The low rungs exist to find
+// the rung that actually breaks, and failing one of those is information, not
+// a regression — only falling short of GATE fails the test.
 //
 // Run:
 //   npm run build:lib
@@ -41,13 +47,23 @@ const WORK = join(DIST, "transcode-test");
 
 // Rungs in VP9 bitrates (kbps-ish strings ffmpeg understands). A viewer gets
 // ONE of these, so the clip has to survive whichever one they're served.
+// 360p and below are margin probes, not requirements — see GATE.
 const LADDER = [
   { name: "2160p", height: 2160, vp9: 20000 },
   { name: "1440p", height: 1440, vp9: 9000 },
   { name: "1080p", height: 1080, vp9: 4500 },
   { name: "720p", height: 720, vp9: 2500 },
   { name: "480p", height: 480, vp9: 1200 },
+  { name: "360p", height: 360, vp9: 750 },
+  { name: "240p", height: 240, vp9: 400 },
+  { name: "144p", height: 144, vp9: 200 },
 ];
+
+// The rung the feature must reach for this test to pass. Set to the depth
+// already demonstrated, so the test is a regression gate on proven ground
+// rather than an aspiration. Rungs below it are probed to locate the real
+// breaking point; failing those is a measurement, not a failure.
+const GATE = "480p";
 
 // As of 2026 YouTube delivers AV1 as its primary codec (VP9 remains the
 // fallback and is still produced for 4K), so a test that only exercised VP9
@@ -104,6 +120,19 @@ function availableFamilies() {
 }
 
 const results = [];
+
+// Contiguous from the top: if 480p fails, a lucky 360p pass underneath it is
+// noise, not a floor anyone can be promised. Returns the LADDER index of the
+// deepest rung reached without a break, or -1 for "nothing survives".
+function floorIndexOf(key) {
+  let i = -1;
+  while (i + 1 < LADDER.length) {
+    const r = results.find((x) => x.family === key && x.name === LADDER[i + 1].name);
+    if (!r?.ok) break;
+    i++;
+  }
+  return i;
+}
 
 async function main() {
   if (!existsSync(FFMPEG)) throw new Error(`ffmpeg not found at ${FFMPEG} (set FFMPEG=)`);
@@ -234,13 +263,14 @@ async function main() {
   console.log(`  test key (for a manual upload round-trip): ${exported.key}\n`);
 
   // ---- 2 & 3. transcode each rung of each codec, then decode it back ----
+  const gateRung = LADDER.findIndex((l) => l.name === GATE);
   for (const fam of families) {
    console.log(`--- ${fam.key} (${fam.codec}) — ${fam.note} ---`);
-   for (const rung of LADDER) {
+   for (const [rungIdx, rung] of LADDER.entries()) {
     const kbps = Math.round(rung.vp9 * fam.scale);
     const tag = `${fam.key}-${rung.name}`;
     const out = join(WORK, `rung-${tag}.${fam.ext}`);
-    process.stdout.write(`  ${rung.name} @ ${kbps}k: transcoding… `);
+    process.stdout.write(`  ${rung.name} @ ${kbps}k${rungIdx > gateRung ? " (probe)" : ""}: transcoding… `);
     try {
       ff([
         "-i", master,
@@ -320,52 +350,66 @@ async function main() {
   // ---- 4. the verdict ----
   console.log("=== transcode survival ===");
   for (const fam of families) {
-    const mine = results.filter((r) => r.family === fam.key);
-    const survivors = mine.filter((r) => r.ok);
-    const lowest = survivors[survivors.length - 1];
+    const idx = floorIndexOf(fam.key);
+    const floor = idx === -1 ? null : LADDER[idx];
     console.log(
       `  ${fam.key.padEnd(6)} ${
-        survivors.length === 0
+        floor === null
           ? "NOTHING SURVIVES"
-          : `survives down to ${lowest.name} (${lowest.kbps}k)`
+          : `survives down to ${floor.name} (${Math.round(floor.vp9 * fam.scale)}k)`
       }${fam.representative ? "" : "   [not a YouTube codec — indicative only]"}`,
     );
-    for (const r of mine) {
+    for (const r of results.filter((r) => r.family === fam.key)) {
       console.log(`         ${r.name.padEnd(7)} ${String(r.kbps + "k").padEnd(7)} ${r.ok ? "ok" : `fail${r.note ? ` — ${r.note}` : ""}`}`);
     }
   }
 
   // The honest bar: it has to survive EVERY codec YouTube actually delivers,
   // because a viewer doesn't choose which rendition they're served. So the
-  // guidance is the safe floor — the shallowest depth any real codec reached,
-  // not the deepest one some codec happened to manage.
+  // guidance is the safe floor — the shallowest depth every real codec
+  // reached, not the deepest one some codec happened to manage.
   console.log();
   const reps = families.filter((f) => f.representative);
-  const perFamily = reps.map((f) => {
-    const oks = results.filter((r) => r.family === f.key && r.ok);
-    const deepest = oks.length === 0 ? -1 : LADDER.findIndex((l) => l.name === oks[oks.length - 1].name);
-    return { key: f.key, deepest };
-  });
   let exitCode = 1;
   if (reps.length === 0) {
     console.log(
       "VERDICT: inconclusive — this ffmpeg could not produce AV1 or VP9, the\n" +
         "codecs YouTube delivers. Install a full ffmpeg and re-run.",
     );
-  } else if (perFamily.some((p) => p.deepest === -1)) {
-    const dead = perFamily.filter((p) => p.deepest === -1).map((p) => p.key).join(" and ");
-    console.log(
-      `VERDICT: FAILS. Nothing survived ${dead}, which YouTube delivers — so a\n` +
-        "viewer served that rendition cannot recover the file at any resolution.\n" +
-        "The preset needs bigger modules, more redundancy, or both.",
-    );
   } else {
-    const floor = LADDER[Math.min(...perFamily.map((p) => p.deepest))];
-    console.log(
-      `VERDICT: survives every codec YouTube delivers, down to ${floor.name}.\n` +
-        `Guidance to users: download at ${floor.name} or better.`,
-    );
-    exitCode = 0;
+    const floors = reps.map((f) => ({ key: f.key, idx: floorIndexOf(f.key) }));
+    const worst = Math.min(...floors.map((f) => f.idx));
+    const dead = floors.filter((f) => f.idx === -1).map((f) => f.key);
+    if (dead.length > 0) {
+      console.log(
+        `VERDICT: FAILS. Nothing survived ${dead.join(" and ")}, which YouTube delivers — so a\n` +
+          "viewer served that rendition cannot recover the file at any resolution.\n" +
+          "The preset needs bigger modules, more redundancy, or both.",
+      );
+    } else if (worst < gateRung) {
+      const weakest = floors.find((f) => f.idx === worst);
+      console.log(
+        `VERDICT: FAILS the ${GATE} bar. The safe floor is ${LADDER[worst].name} — ${weakest.key} is the\n` +
+          `codec that gives out first — but YouTube serves ${GATE} routinely, so a viewer can\n` +
+          "be handed a rendition this clip cannot survive. The preset needs bigger\n" +
+          "modules, more redundancy, or both.",
+      );
+    } else {
+      const floor = LADDER[worst];
+      const broke = LADDER[worst + 1];
+      console.log(
+        `VERDICT: survives every codec YouTube delivers, down to ${floor.name}.\n` +
+          `Guidance to users: download at ${floor.name} or better.`,
+      );
+      console.log(
+        broke
+          ? `Margin: ${worst - gateRung} rung(s) of headroom past the ${GATE} bar; the shallowest rung\n` +
+            `that actually breaks is ${broke.name}.`
+          : `Margin: unknown — the clip survived every rung tested, down to the bottom of\n` +
+            `the ladder (${LADDER[LADDER.length - 1].name}). Extend LADDER to find the real floor.`,
+      );
+      exitCode = 0;
+    }
   }
   console.log(
     "\nCaveat: YouTube uses per-title encoding, and bitrates at one resolution\n" +
