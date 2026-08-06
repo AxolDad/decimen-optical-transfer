@@ -63,6 +63,22 @@ end-to-end: a sealed file streamed over a canvas MediaStream locks, rejects a wr
 and unlocks byte-exact; and the publish-anywhere path — export a clip, decode the recording
 from scratch — round-trips byte-exact and sealed.
 
+Transcode survival is now **measured rather than assumed** (`tests/e2e/transcode.e2e.mjs`,
+run in CI on every push to the working branch). A sealed 28 KB incompressible payload
+exported through the "Encrypt for YouTube" preset becomes k=59 source blocks carried by ~160
+codes in a 20 s 4K clip — a ~63% loss tolerance, which is what makes the run evidence rather
+than luck — and after re-encoding through AV1, VP9 and H.264 bitrate ladders it decodes
+**byte-exact at every rung from 2160p down to 480p**. Safe floor 480p, now the guidance in
+the sender UI and the README, and item 6 below is validated as a set. Two caveats stay
+attached: the ladder simulates the codecs YouTube delivers and is not a round-trip through
+it, and nothing in that first ladder broke — so the number is a lower bound, not a margin,
+which is why the test now probes 360p/240p/144p beneath an explicit 480p gate. Getting one
+valid number took three runs, and the two failures (a compressible payload collapsing to
+k=2; then an LCG losing precision past 2^53 and degenerating into deflate-friendly
+structure) are recorded in `tests/e2e/README.md` — both would have reported a confident row
+of green ticks while measuring nothing, which is the failure mode this feature is most
+exposed to.
+
 Phase 4 is implemented: the engine is now a library (`lib/`) — `OpticalSender` /
 `OpticalReceiver` classes plus `<optical-sender>` / `<optical-receiver>` Web Components —
 with the `/send/` and `/receive/` pages rewritten as thin consumers of it (still the
@@ -241,7 +257,7 @@ capture with the code filling ≥⅓ of frame height; v40 @ 24 fps (60 KB/s ceil
    at 3.4 ms/code, grid mode needs ~2–3 cores of generation headroom; `OffscreenCanvas` or
    transferred `ImageData` both work. Main thread only flips pre-rendered frames.
 3. **Multi-code grid (the big one)**: render 2×1 / 2×2 codes per displayed frame, each code
-   its own fountain frame with consecutive `seq` — **zero protocol changes required**; the
+   its own fountain frame with consecutive `seq` — **zero protocol changes required** — the
    receiver already treats every decoded symbol independently. Receiver side: during
    acquisition decode full frame with `maxNumberOfSymbols: 4`; once locked, decode each
    code's ROI as an independent worker job (the grid parallelizes perfectly across the
@@ -317,7 +333,9 @@ the channel holds only ciphertext.
    fewer/larger modules (lower QR versions), 1080p-integer module scaling, each QR frame held
    ≥ 2 video frames, and — notably — **raise in-frame ECC to M or Q here**: the README's
    ECC-L rationale is correct for the erasure-dominant camera channel but inverts on a
-   corruption-prone codec channel.
+   corruption-prone codec channel. *(Implemented as the "Encrypt for YouTube" preset and
+   measured — see the status note above: byte-exact through AV1/VP9/H.264 ladders down to
+   480p.)*
 7. **Honest security notes in the README.** Encryption hides content, not existence — a QR
    video is conspicuously a data stream. Authenticity extends only to whoever holds the key
    (no signatures in scope). And ciphertext posted publicly is exposed to offline guessing
@@ -326,6 +344,13 @@ the channel holds only ciphertext.
 *Acceptance:* a file exported as video, uploaded to YouTube, re-downloaded at 1080p, and fed
 to the receiver round-trips bit-exact with the right key; a wrong key is cleanly rejected;
 no plaintext (including filename) appears anywhere in the published stream.
+
+**Status against that bar:** the wrong-key rejection and no-plaintext halves are verified in
+CI (`tests/e2e/lib.e2e.mjs`). The round-trip half is verified against a *simulated* AV1 /
+VP9 / H.264 ladder down to 480p (`tests/e2e/transcode.e2e.mjs`) — stronger than the 1080p
+the criterion asked for, but a simulation of YouTube's codecs rather than YouTube itself.
+The literal upload is the one step still outstanding; the CI run publishes the pre-transcode
+clip as an artifact and prints its key precisely so that step can be done by hand.
 
 ### Phase 4 — Embeddable library + hosted demo (the "embed it on a website" goal)
 
