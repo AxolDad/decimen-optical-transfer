@@ -7,6 +7,7 @@ import { LTDecoder, LTEncoder } from "../shared/fountain";
 import { HEADER_LEN, fnv1a, packFrame, parseFrame, splitmix32 } from "../shared/protocol";
 import { photograph } from "./camera";
 import { findMarkerAngle, locate, polarToImage, sampleAt } from "./locate";
+import { registerOfflineWorker } from "../shared/pwa";
 import {
   MARKER,
   PALETTE,
@@ -281,3 +282,5 @@ function run() {
     }
   }, 1000 / fps);
 }
+
+registerOfflineWorker("../");

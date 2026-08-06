@@ -6,6 +6,7 @@
 import QRCode from "qrcode";
 import { OpticalSender, type ExportOptions, type SenderPayload } from "../lib/sender";
 import { randomKeyHex } from "../shared/crypto";
+import { registerOfflineWorker } from "../shared/pwa";
 
 // The "Encrypt for YouTube" robustness recipe: big modules (low density),
 // slow code rate (each code spans several video frames), high in-frame ECC,
@@ -247,3 +248,5 @@ function main() {
 }
 
 main();
+
+registerOfflineWorker("../");

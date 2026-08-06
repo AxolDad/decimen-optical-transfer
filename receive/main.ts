@@ -3,6 +3,7 @@
 // buttons, metrics, the sealed-stream unlock flow, and the download UI.
 
 import { OpticalReceiver, type ReceivedFile } from "../lib/receiver";
+import { registerOfflineWorker } from "../shared/pwa";
 
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const videoFileIn = document.getElementById("cfg-video") as HTMLInputElement;
@@ -131,3 +132,5 @@ function showFile(f: ReceivedFile) {
   }
   (navigator as Navigator & { vibrate?: (p: number[]) => void }).vibrate?.([100, 60, 100]);
 }
+
+registerOfflineWorker("../");

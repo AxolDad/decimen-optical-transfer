@@ -8,6 +8,7 @@
 import QRCode from "qrcode";
 import { LTDecoder, LTEncoder } from "../shared/fountain";
 import { HEADER_LEN, fnv1a, packFrame, parseFrame, splitmix32 } from "../shared/protocol";
+import { registerOfflineWorker } from "../shared/pwa";
 
 const MARGIN = 4;
 const SESSION = 0xbee5;
@@ -246,3 +247,5 @@ async function run() {
     feed(w);
   }
 }
+
+registerOfflineWorker("../");
