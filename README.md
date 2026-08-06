@@ -96,7 +96,9 @@ mean dropped frames, which the fountain happily absorbs.
   for most of the transfer, then teleports to 100%.
 - **QR error correction is set to the minimum (L).** In-frame ECC and the
   fountain layer solve different problems (corruption vs erasure), but at
-  these frame sizes level L plus frame disposal is the better trade.
+  these frame sizes level L plus frame disposal is the better trade. (The
+  exception is the transcode channel — see sealed streams below, where
+  corruption dominates and ECC Q wins.)
 
 ## Tuning
 
@@ -212,6 +214,25 @@ bytes) with **AES-256-GCM** *above* the fountain layer, so:
 - `exportVideo()` writes the stream to a WebM you can upload anywhere — post
   it publicly and only the key holder can ever open it.
 
+### Does it survive being a video?
+
+That last bullet is only worth anything if the clip still decodes after a
+platform re-encodes it, so the **Encrypt for YouTube** button applies a
+transcode-hardened recipe: big modules, each code held across several video
+frames, in-frame ECC raised to Q, 2.4× fountain redundancy, rendered at 4K.
+The codec's damage then lands on frames the fountain can spare rather than on
+the file.
+
+Measured (`tests/e2e/transcode.e2e.mjs`, run in CI): a sealed 28 KB payload
+exported that way becomes 59 source blocks carried by ~160 codes, and after
+re-encoding through simulated **AV1**, **VP9** and H.264 bitrate ladders it
+decodes **byte-exact at every rung from 2160p down to 480p**. So the guidance
+is: download at 480p or better.
+
+The honest limit on that number: it simulates the codecs YouTube delivers, it
+is not a round-trip through YouTube. Real per-title encoding varies bitrate by
+over 400% at a single resolution, which a fixed ladder cannot reproduce.
+
 Two honest caveats, also in the code comments: encryption hides content, not
 *existence* (a QR video is obviously a data stream), and ciphertext posted
 publicly is exposed to offline guessing forever — so for anything published,
@@ -228,7 +249,10 @@ npm run build:lib # the embeddable library: ESM + IIFE + .d.ts types
 Browser end-to-end tests (sealed transfer, video export/decode) live in
 `tests/e2e/` and run against the built library through headless Chromium —
 see `tests/e2e/README.md`. They're separate from `npm test` because they
-need a browser and a preview server.
+need a browser and a preview server. `transcode.e2e.mjs` additionally needs a
+full ffmpeg: it re-encodes an exported clip through AV1/VP9/H.264 bitrate
+ladders and reports the shallowest rendition that still decodes byte-exact —
+which is where the "download at 480p or better" guidance above comes from.
 
 The determinism goldens in `tests/` pin exact `dlog`/soliton/frame-index
 outputs — if a refactor or a JS engine shifts a single bit, they fail loudly
