@@ -188,14 +188,38 @@ the recording *is* the ciphertext container.
 
 ## Air-gap kit (fully offline)
 
-Because everything is local, the built demo *is* an offline transfer tool:
-copy the `dist/` folder onto the isolated machine once (USB stick, one-time
-QR bootstrap, however you like), serve it from `localhost` with any static
-server, and it never needs a network again — `localhost` is a secure
-context, so the camera works. The payload only ever travels as light; now
-the app doesn't travel over a network either. Combined with a sealed stream,
-you can move an encrypted file onto or off of an air-gapped box with nothing
-but two screens and a camera.
+Everything is local, so the built demo *is* an offline transfer tool. There
+are two routes, and which one you need depends on the device.
+
+**On a computer** — copy `dist/` onto the isolated machine once (USB stick,
+one-time QR bootstrap, however you like) and serve it from `localhost` with
+any static server. It never needs a network again: `localhost` is a secure
+context, so the camera works.
+
+**On a phone** — install it. Open the hosted page once, add it to the home
+screen, and a service worker caches the whole app. After that it runs with no
+network at all.
+
+- **Run the receiver once while still online.** The ~940 KB zxing decoder is
+  lazy-loaded on camera start, so a fresh install that has never received
+  anything has not downloaded it yet. That single step is the readiness
+  condition.
+- **You cannot skip this by opening the HTML from Files.** A `file://` origin
+  is not a secure context, `getUserMedia` does not exist there, and the camera
+  is simply absent. This is the trap; the service worker is the way around it.
+- **Verified offline end to end:** with the network cut, the page is served
+  from cache, the camera starts, and the WASM decoder runs at ~13 ms/frame.
+- **Cache-first, deliberately.** An update is an explicit act (bump `VERSION`
+  in `public/sw.js`), never something that happens mid-transfer.
+
+Worth noting *why* this works at all: because the app ships its own decoder
+rather than calling the phone's. A built-in decoder would mean depending on
+an OS service — on Android `BarcodeDetector` routes through Google Play
+Services — and it hands back a *string*, which is not binary-safe for
+ciphertext. The 940 KB that looks like a cost is what buys the air gap.
+
+Combined with a sealed stream, you can move an encrypted file onto or off of
+an air-gapped box with nothing but two screens and a camera.
 
 ## Sealed streams (optical broadcast)
 
