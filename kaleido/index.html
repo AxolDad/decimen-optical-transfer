@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Decimen — kaleidoscope</title>
+    <meta name="theme-color" content="#0a0908" />
+    <link rel="manifest" href="../manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="../icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="stylesheet" href="../shared/style.css" />
+  </head>
+  <body>
+    <h1>Decimen <small>kaleidoscope · experiment</small></h1>
+
+    <p class="lede">
+      The same fountain stream, drawn as a spinning mandala of coloured wedges
+      instead of QR codes.
+    </p>
+
+    <h2>How the symbology works</h2>
+    <ul>
+      <li><b>3 bits per wedge</b>, from an 8-colour palette chosen for maximum separation under a camera's white balance.</li>
+      <li><b>Rotation is the clock.</b> The innermost ring carries one marker wedge whose angular position <em>is</em> the frame phase, so no frame counter is needed.</li>
+      <li><b>The outer ring is a calibration strip</b> carrying all 8 palette colours, so the decoder rebuilds its classifier from every single frame rather than trusting a fixed threshold.</li>
+      <li><b>Nothing below it changed.</b> The fountain, protocol and envelope stack underneath is the same code the QR path uses.</li>
+    </ul>
+
+    <h2>Can a camera actually decode it?</h2>
+    <p>
+      The decoder no longer knows where the symbol is. It finds the mandala by
+      image moments, fits an ellipse, and recovers rotation from the sync
+      marker — so <em>simulated camera</em> below is a real test, not a
+      redraw. Measured with the settings on this page:
+    </p>
+    <ul>
+      <li><b>Square on: yes.</b> 128 KB byte-exact through perspective placement, arbitrary rotation, blur and 4:2:0 chroma. 76 frames corrupted out of ~1050, all absorbed by the fountain.</li>
+      <li><b>4:2:0 chroma subsampling is not the blocker.</b> 6/6 frames decode with it on <em>and</em> off at this wedge size — the failure the design notes feared most turns out not to bite here.</li>
+      <li><b>Tilt is the blocker.</b> 6/6 square on, 2/6 once the far edge is 3% shorter than the near edge, 0/6 beyond that. A barely perceptible tilt kills it.</li>
+      <li><b>Why:</b> moments fit an <em>affine</em> model, which covers rotation, scale and position exactly. True perspective makes concentric circles non-concentric ellipses, and that assumption breaks. It needs a conic fit and a real homography — the first of the open gaps, not a tuning problem.</li>
+      <li><b>So: a phone on a tripod, square to the screen, would work today.</b> A phone in your hand would not.</li>
+    </ul>
+    <p>
+      Full measurements, the 4K ceiling maths and the remaining gaps are in
+      <code>docs/KALEIDOSCOPE.md</code>.
+    </p>
+
+    <details class="settings" open>
+      <summary>Configuration</summary>
+      <div class="row">
+        <label>
+          canvas px
+          <select id="cfg-size">
+            <option>720</option>
+            <option selected>1080</option>
+            <option>1536</option>
+            <option>2160</option>
+          </select>
+        </label>
+        <label>
+          rings
+          <select id="cfg-rings">
+            <option>18</option>
+            <option selected>26</option>
+            <option>34</option>
+          </select>
+        </label>
+        <label>
+          sectors
+          <select id="cfg-sectors">
+            <option>48</option>
+            <option selected>64</option>
+            <option>96</option>
+            <option>128</option>
+          </select>
+        </label>
+        <label>
+          fps
+          <select id="cfg-fps">
+            <option>15</option>
+            <option selected>30</option>
+          </select>
+        </label>
+        <label>
+          sample noise
+          <select id="cfg-noise">
+            <option selected>0</option>
+            <option>10</option>
+            <option>20</option>
+            <option>35</option>
+          </select>
+        </label>
+        <label>
+          simulated camera
+          <select id="cfg-cam">
+            <option value="off" selected>off — pristine pixels</option>
+            <option value="square">phone, square on</option>
+            <option value="tilted">phone, tilted</option>
+            <option value="harsh">phone, harsh angle</option>
+          </select>
+        </label>
+        <label>
+          payload
+          <select id="cfg-payload">
+            <option value="131072" selected>128 KB</option>
+            <option value="524288">512 KB</option>
+          </select>
+        </label>
+      </div>
+      <ul style="padding-top: 0.85rem">
+        <li><b>rings × sectors</b> sets the wedge count, and therefore bytes per frame. More wedges means smaller targets for the classifier.</li>
+        <li><b>sample noise</b> adds ±N per RGB channel at sample time, to probe how much margin the classifier actually has before colours start colliding.</li>
+      </ul>
+    </details>
+
+    <div class="actions">
+      <button id="run">Run loopback</button>
+    </div>
+
+    <div class="hint" id="status">idle</div>
+    <div class="stage dark"><canvas id="wheel" width="16" height="16"></canvas></div>
+    <div class="hint" id="cam-stage" style="display: none">
+      what the simulated camera sees — perspective, 4:2:0 chroma, blur, noise
+      <div class="stage dark" style="margin-top: 0.5rem">
+        <canvas id="cam" width="16" height="16"></canvas>
+      </div>
+    </div>
+    <pre id="log"></pre>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

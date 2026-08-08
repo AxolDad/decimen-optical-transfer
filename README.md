@@ -6,6 +6,11 @@ device points its camera at it and reconstructs the file. **No network path
 between the devices, no app, no pairing, no permissions beyond the camera.**
 The payload travels as light.
 
+> **YouTube as a dead drop.** Encrypt a file, post it anywhere as a stream of
+> animated light, and only the key holder can ever open it — no network, no
+> account, no trace of what it is. See
+> [Sealed streams](#sealed-streams-optical-broadcast).
+
 This is a minimal proof of concept extracted from a larger
 experiment that reached **128 KB/s phone-to-phone** with denser frames,
 multi-code grids, and an error-corrected color channel. This PoC keeps only
@@ -60,8 +65,8 @@ blocks directly. Each frame is the XOR of a pseudorandom *subset* of blocks;
 the subset is derived deterministically from the frame's sequence number,
 with subset sizes drawn from a robust-soliton distribution ([Luby transform
 coding](https://en.wikipedia.org/wiki/Luby_transform_code)). The receiver
-collects **any** ~K·1.15 distinct frames, in any order, and peels the file
-out of them. Dropped frames cost a little time, never correctness. Sender
+collects **any** ~K·1.2 distinct frames (measured 1.11–1.28; small K trends
+worse), in any order, and peels the file out of them. Dropped frames cost a little time, never correctness. Sender
 and receiver frame rates don't need to match at all.
 
 **Every frame is self-describing.** A 20-byte header carries the session id,
@@ -91,7 +96,9 @@ mean dropped frames, which the fountain happily absorbs.
   for most of the transfer, then teleports to 100%.
 - **QR error correction is set to the minimum (L).** In-frame ECC and the
   fountain layer solve different problems (corruption vs erasure), but at
-  these frame sizes level L plus frame disposal is the better trade.
+  these frame sizes level L plus frame disposal is the better trade. (The
+  exception is the transcode channel — see sealed streams below, where
+  corruption dominates and ECC Q wins.)
 
 ## Tuning
 
@@ -99,16 +106,195 @@ Both pages have a collapsed **Settings** panel. On the sender: payload size
 (512 KB or 2 MB), tx fps, bytes per frame, error-correction level, and
 display size. Changing anything restarts the stream, and the receiver resets
 automatically off the new session id. On the receiver: capture width,
-capture fps, and decode worker count, applied when the camera starts.
+capture fps, and decode worker count (default "auto" = CPU cores − 1, capped
+at 4), applied when the camera starts.
+
+The receiver decodes in two modes: full-frame **acquisition** until the first
+code lands, then **locked** — frames are cropped to the code's last position
+(the "roi crop" metric; ~3× faster decode) and, where the browser supports
+it, pixels travel as transferred `VideoFrame`s with the luma plane extracted
+inside the worker, so the main thread never copies a frame. A run of misses
+falls back to acquisition automatically. On platforms that expose manual
+focus (Chromium/Android), autofocus is frozen once locked — hunting AF is
+the #1 throughput killer.
 
 | setting | default | notes |
 |---|---|---|
-| tx fps | 24 | each frame must own at least 2 refresh cycles of the display |
+| preset | balanced | steady / balanced / dense / grid / ludicrous — one knob that sets fps, density, and grid together |
+| target fps | 30 | frames are held for a whole number of refresh cycles (min 2), so the *actual* fps — shown in the status line — is the nearest exact division of your display's measured refresh rate; a 120 Hz display unlocks 60 |
 | bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2953 (v40) works phone-to-phone at close range |
+| codes / frame | 1 | 2 or 4 codes per displayed frame multiply the channel (each is an independent fountain frame — no protocol change), but shrink the modules: get closer, prop the phone, use a big display |
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s
 handheld, ~186 KB/s propped.
+
+## Embedding it on your own site
+
+The engine ships as a library (`lib/`) with the `/send/` and `/receive/`
+pages as its reference UI. Two ways to embed:
+
+**Web Components** (no build step):
+
+```html
+<optical-sender id="tx" fps="30" codes="4"></optical-sender>
+<optical-receiver id="rx" autostart></optical-receiver>
+<script type="module">
+  import "decimen-optical-transfer"; // registers the elements
+  document.querySelector("#tx").send(myFile);            // a File or {bytes,name,mime}
+  document.querySelector("#rx").addEventListener("complete", (e) => {
+    const { name, mime, bytes } = e.detail;              // reconstructed file
+    // save it, preview it, hand it to your app…
+  });
+</script>
+```
+
+**The API directly** (bundler / framework):
+
+```ts
+import { OpticalSender, OpticalReceiver } from "decimen-optical-transfer";
+
+const sender = new OpticalSender({ canvas, payload: { bytes, name, mime },
+  codes: 4, encryptKey: "optional passphrase or 64-hex key" });
+await sender.start();
+
+const receiver = new OpticalReceiver({ video,      // your <video> element
+  onComplete: (file) => { /* file.bytes, file.name, file.mime */ } });
+await receiver.start();                              // opens the camera
+// receiver.start(aFile) instead decodes a recorded video, no camera
+```
+
+Everything is client-side — file bytes never touch a server, which is the
+whole point of embedding it. `onComplete` hands your app the raw bytes and
+metadata, so a wrapper (or a future desktop app) can write them straight to
+disk instead of offering a download.
+
+**Sealed streams** (`encryptKey` set): the payload is AES-256-GCM ciphertext
+end to end (see [Sealed streams](#sealed-streams-optical-broadcast) below).
+`sender.exportVideo()` records a self-contained clip you can host anywhere —
+the recording *is* the ciphertext container.
+
+**Embedding realities**, all documented so they don't surprise you:
+
+- Camera access needs a **secure context**; an `<iframe>` needs
+  `allow="camera"`.
+- The receiver loads a ~940 KB (403 KB gzipped) zxing **WASM** decoder,
+  lazily on start; strict-CSP hosts need `wasm-unsafe-eval`. The sender side
+  pulls in no WASM.
+- `npm run build:lib` emits an **ESM** build (`dist-lib/decimen-optical.js`,
+  ~11 KB gzipped + the worker chunks) for bundler/npm consumers and an
+  **IIFE** (`window.DecimenOptical`) for `<script>` use. The decode worker
+  and WASM are separate chunks the ESM resolves via `import.meta.url`.
+
+## Air-gap kit (fully offline)
+
+Everything is local, so the built demo *is* an offline transfer tool. There
+are two routes, and which one you need depends on the device.
+
+**On a computer** — copy `dist/` onto the isolated machine once (USB stick,
+one-time QR bootstrap, however you like) and serve it from `localhost` with
+any static server. It never needs a network again: `localhost` is a secure
+context, so the camera works.
+
+**On a phone** — install it. Open the hosted page once, add it to the home
+screen, and a service worker caches the whole app. After that it runs with no
+network at all.
+
+- **Run the receiver once while still online.** The ~940 KB zxing decoder is
+  lazy-loaded on camera start, so a fresh install that has never received
+  anything has not downloaded it yet. That single step is the readiness
+  condition.
+- **You cannot skip this by opening the HTML from Files.** A `file://` origin
+  is not a secure context, `getUserMedia` does not exist there, and the camera
+  is simply absent. This is the trap; the service worker is the way around it.
+- **Verified offline end to end:** with the network cut, the page is served
+  from cache, the camera starts, and the WASM decoder runs at ~13 ms/frame.
+- **Cache-first, deliberately.** An update is an explicit act (bump `VERSION`
+  in `public/sw.js`), never something that happens mid-transfer.
+
+Worth noting *why* this works at all: because the app ships its own decoder
+rather than calling the phone's. A built-in decoder would mean depending on
+an OS service — on Android `BarcodeDetector` routes through Google Play
+Services — and it hands back a *string*, which is not binary-safe for
+ciphertext. The 940 KB that looks like a cost is what buys the air gap.
+
+Combined with a sealed stream, you can move an encrypted file onto or off of
+an air-gapped box with nothing but two screens and a camera.
+
+## Sealed streams (optical broadcast)
+
+An optical channel is a broadcast: anyone with line of sight — or a copy of
+a screen recording — receives every frame. Sealed mode turns that into a
+feature. With a key set, the sender encrypts the payload (name, type, and
+bytes) with **AES-256-GCM** *above* the fountain layer, so:
+
+- frame headers stay public and **anyone can collect** a complete stream —
+  the receiver even verifies it by hash and reports "received, locked" — but
+  every content byte, including the filename, is ciphertext;
+- the key is entered on the receiver as a passphrase (PBKDF2-SHA-256,
+  600k iterations) or a raw 256-bit key, **before, during, or long after**
+  collection;
+- a wrong key fails GCM authentication cleanly ("wrong key"), never garbage;
+- `exportVideo()` writes the stream to a WebM you can upload anywhere — post
+  it publicly and only the key holder can ever open it.
+
+### Does it survive being a video?
+
+That last bullet is only worth anything if the clip still decodes after a
+platform re-encodes it, so the **Encrypt for YouTube** button applies a
+transcode-hardened recipe: big modules, each code held across several video
+frames, in-frame ECC raised to Q, 2.4× fountain redundancy, rendered at 4K.
+The codec's damage then lands on frames the fountain can spare rather than on
+the file.
+
+Measured (`tests/e2e/transcode.e2e.mjs`, run in CI): a sealed 28 KB payload
+exported that way becomes 59 source blocks carried by ~160 codes, and after
+re-encoding through simulated **AV1**, **VP9** and H.264 bitrate ladders it
+comes back **byte-exact down to 240p**, breaking at 144p on all three codecs.
+
+The number to actually use is **480p or better** — two rungs above the
+measured floor, on purpose. A measured floor is not a safe floor: each ladder
+rung is a single bitrate point, while YouTube's per-title encoding moves the
+real bitrate at a fixed resolution by more than 400%. And the ladder
+simulates the codecs YouTube delivers; it is not a round-trip through
+YouTube, which is the only thing that would settle it outright.
+
+Two honest caveats, also in the code comments: encryption hides content, not
+*existence* (a QR video is obviously a data stream), and ciphertext posted
+publicly is exposed to offline guessing forever — so for anything published,
+prefer a generated random key over a human passphrase.
+
+## Development
+
+```bash
+npm test          # unit tests: fountain, protocol, envelope, crypto, geometry
+npm run build     # typecheck + production build (the demo pages)
+npm run build:lib # the embeddable library: ESM + IIFE + .d.ts types
+```
+
+Browser end-to-end tests (sealed transfer, video export/decode) live in
+`tests/e2e/` and run against the built library through headless Chromium —
+see `tests/e2e/README.md`. They're separate from `npm test` because they
+need a browser and a preview server. `transcode.e2e.mjs` additionally needs a
+full ffmpeg: it re-encodes an exported clip through AV1/VP9/H.264 bitrate
+ladders and reports the shallowest rendition that still decodes byte-exact —
+which is where the numbers above come from.
+
+The determinism goldens in `tests/` pin exact `dlog`/soliton/frame-index
+outputs — if a refactor or a JS engine shifts a single bit, they fail loudly
+instead of letting sender and receiver silently desynchronize.
+
+`/bench/` is a camera-free loopback: the real encode → QR → zxing-worker →
+fountain pipeline against synthetic frames, with knobs for module size,
+frame size, blur, loss, worker count, and reader options. Open it on the
+actual receiving device to measure that device's decode ceiling and to A/B
+tuning changes. (See `docs/IMPROVEMENT-PLAN.md` for the roadmap this
+supports.)
+
+`/kaleido/` is an experiment that renders the same fountain stream as a
+spinning 8-color mandala instead of QR codes — rotation as sync, a
+per-frame color-calibration ring, loopback decoder and all. Notes and
+measurements in `docs/KALEIDOSCOPE.md`.
 
 ## Similar projects
 

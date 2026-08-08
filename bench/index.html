@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Decimen — bench</title>
+    <meta name="theme-color" content="#0a0908" />
+    <link rel="manifest" href="../manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="../icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="stylesheet" href="../shared/style.css" />
+  </head>
+  <body>
+    <h1>Decimen <small>loopback bench</small></h1>
+
+    <p class="lede">
+      Runs the real encode → QR → zxing-worker → fountain pipeline against
+      synthetic frames on this device's CPU. No camera, no second device.
+    </p>
+
+    <ul>
+      <li><b>Finds the decode ceiling</b> for whatever hardware you open it on, which is the number that caps everything else.</li>
+      <li><b>Answers optics or CPU.</b> If a real transfer is slow but the bench is fast, the problem is how you're holding the phone.</li>
+      <li><b>A/B tests decoder settings</b> without the variance a handheld camera adds to every measurement.</li>
+      <li><b>Open it on the receiving device.</b> A laptop's numbers say nothing useful about a phone's.</li>
+    </ul>
+
+    <details class="settings" open>
+      <summary>Configuration</summary>
+      <div class="row">
+        <label>
+          payload
+          <select id="cfg-payload">
+            <option value="131072">128 KB</option>
+            <option value="524288" selected>512 KB</option>
+            <option value="2097152">2 MB</option>
+          </select>
+        </label>
+        <label>
+          bytes / frame
+          <select id="cfg-bytes">
+            <option>500</option>
+            <option>1000</option>
+            <option selected>1465</option>
+            <option>1850</option>
+            <option>2331</option>
+            <option>2953</option>
+          </select>
+        </label>
+        <label>
+          error correction
+          <select id="cfg-ecc">
+            <option selected>L</option>
+            <option>M</option>
+            <option>Q</option>
+            <option>H</option>
+          </select>
+        </label>
+        <label>
+          px / module
+          <select id="cfg-scale">
+            <option>2</option>
+            <option selected>3</option>
+            <option>4</option>
+            <option>6</option>
+          </select>
+        </label>
+        <label>
+          frame
+          <select id="cfg-frame">
+            <option value="0" selected>tight crop</option>
+            <option value="1280">1280×960</option>
+            <option value="1920">1920×1080</option>
+          </select>
+        </label>
+        <label>
+          blur radius
+          <select id="cfg-blur">
+            <option selected>0</option>
+            <option>1</option>
+            <option>2</option>
+          </select>
+        </label>
+        <label>
+          frame loss
+          <select id="cfg-loss">
+            <option value="0" selected>0%</option>
+            <option value="0.1">10%</option>
+            <option value="0.3">30%</option>
+            <option value="0.5">50%</option>
+          </select>
+        </label>
+        <label>
+          decode workers
+          <select id="cfg-workers">
+            <option>1</option>
+            <option selected>2</option>
+            <option>4</option>
+            <option>8</option>
+          </select>
+        </label>
+        <label>
+          reader options
+          <select id="cfg-opts">
+            <option value="tuned" selected>tuned (fast)</option>
+            <option value="defaults">zxing defaults</option>
+          </select>
+        </label>
+      </div>
+      <ul style="padding-top: 0.85rem">
+        <li><b>tight crop</b> measures pure decode cost, matching a receiver that has already locked on and is cropping to the code.</li>
+        <li><b>1280 and 1920</b> reproduce full-capture decode, before a lock narrows the search.</li>
+        <li><b>Frame synthesis runs on the main thread</b>, so with many fast workers the pipeline can be generation-bound rather than decode-bound. The report says which it was.</li>
+      </ul>
+    </details>
+
+    <div class="actions">
+      <button id="run">Run</button>
+    </div>
+
+    <div class="hint" id="status">idle</div>
+    <div class="progress" id="progress" style="display: none"><div id="bar"></div></div>
+    <pre id="log"></pre>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

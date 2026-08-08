@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>decimen lib e2e harness</title>
+  </head>
+  <body>
+    <!-- Loads the BUILT library so the e2e runner drives the same code npm
+         consumers get. Served from dist-lib/ (see lib.e2e.mjs). -->
+    <script type="module">
+      import * as lib from "./decimen-optical.js";
+      window.DecimenLib = lib;
+      window.__ready = true;
+    </script>
+  </body>
+</html>

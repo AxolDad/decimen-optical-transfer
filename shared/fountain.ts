@@ -19,8 +19,9 @@ import { splitmix32 } from "./protocol";
 
 const LN2 = 0.6931471805599453;
 
-/** Deterministic natural log: exact-ops range reduction + atanh series. */
-function dlog(x: number): number {
+/** Deterministic natural log: exact-ops range reduction + atanh series.
+ * Exported for the determinism test suite (golden vectors). */
+export function dlog(x: number): number {
   let e = 0;
   let m = x;
   while (m >= 1.5) {
@@ -45,8 +46,9 @@ function dlog(x: number): number {
 const SOLITON_C = 0.1;
 const SOLITON_DELTA = 0.5;
 
-/** Robust-soliton degree CDF for k source blocks. */
-function solitonCdf(k: number): Float64Array {
+/** Robust-soliton degree CDF for k source blocks.
+ * Exported for the determinism test suite (golden vectors). */
+export function solitonCdf(k: number): Float64Array {
   const cdf = new Float64Array(k);
   if (k === 1) {
     cdf[0] = 1;
@@ -74,8 +76,9 @@ function frameSeed(sessionId: number, seq: number): number {
   return (h ^ (h >>> 16)) | 0;
 }
 
-/** The block indices XORed into frame `seq` — identical on both ends. */
-function frameIndices(k: number, cdf: Float64Array, sessionId: number, seq: number): number[] {
+/** The block indices XORed into frame `seq` — identical on both ends.
+ * Exported for the determinism test suite (golden vectors). */
+export function frameIndices(k: number, cdf: Float64Array, sessionId: number, seq: number): number[] {
   const rnd = splitmix32(frameSeed(sessionId, seq));
   // inverse-CDF sample the degree
   const u = rnd() * 2 ** -32;
@@ -121,7 +124,19 @@ export class LTEncoder {
     readonly blockLen: number,
     readonly sessionId: number,
   ) {
+    if (blockLen < 1 || blockLen > 0xffff) {
+      throw new Error(`block length ${blockLen} outside the header's u16 range`);
+    }
+    if (payload.length > 0xffffffff) {
+      throw new Error(`payload is ${payload.length} bytes; the header's length field is u32`);
+    }
     this.k = Math.max(1, Math.ceil(payload.length / blockLen));
+    if (this.k > 0xffff) {
+      const maxMb = ((0xffff * blockLen) / 1024 / 1024).toFixed(0);
+      throw new Error(
+        `payload needs ${this.k} blocks; the header's block count is u16 (max ≈${maxMb} MB at ${blockLen} B/frame)`,
+      );
+    }
     this.words = Math.ceil(blockLen / 4);
     this.blocks = new Uint32Array(this.k * this.words);
     const bytes = new Uint8Array(this.blocks.buffer);

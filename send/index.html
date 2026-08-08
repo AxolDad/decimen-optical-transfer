@@ -3,15 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — send</title>
+    <title>Decimen — send</title>
+    <meta name="theme-color" content="#0a0908" />
+    <link rel="manifest" href="../manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="../icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
+    <h1>Decimen <small>send</small></h1>
+
     <div class="hint" id="specs">loading payload…</div>
+
+    <p class="caution">
+      This page displays a rapidly flashing high-contrast pattern. If you are
+      sensitive to flashing light, don't look at it directly. Point the
+      receiving camera at the screen instead, or lower <em>target fps</em> in
+      settings.
+    </p>
+
     <details class="settings">
       <summary>Settings</summary>
       <div class="row">
+        <label>
+          preset
+          <select id="cfg-preset">
+            <option value="">custom</option>
+            <option value="steady">steady — 1 code @ 20</option>
+            <option value="balanced" selected>balanced — 1 code @ 30</option>
+            <option value="dense">dense — v40 @ 30</option>
+            <option value="grid">grid — 2×2 @ 30</option>
+            <option value="ludicrous">ludicrous — 2×2 @ 60</option>
+          </select>
+        </label>
         <label>
           payload
           <select id="cfg-payload">
@@ -20,14 +46,28 @@
           </select>
         </label>
         <label>
-          tx fps
+          send a file
+          <input id="cfg-file" type="file" />
+        </label>
+        <label>
+          target fps
           <select id="cfg-fps">
+            <option>5</option>
+            <option>8</option>
             <option>10</option>
             <option>15</option>
             <option>20</option>
-            <option selected>24</option>
-            <option>30</option>
+            <option>24</option>
+            <option selected>30</option>
             <option>60</option>
+          </select>
+        </label>
+        <label>
+          codes / frame
+          <select id="cfg-grid">
+            <option selected>1</option>
+            <option>2</option>
+            <option>4</option>
           </select>
         </label>
         <label>
@@ -54,17 +94,61 @@
           display size
           <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
         </label>
+        <label>
+          encryption
+          <select id="cfg-seal">
+            <option value="" selected>off</option>
+            <option value="sealed">sealed</option>
+          </select>
+        </label>
+        <label>
+          passphrase (blank = random key)
+          <input id="cfg-pass" type="text" autocomplete="off" />
+        </label>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Changes restart the stream — the receiver resets automatically (new
-        session id in the frame headers; that's the fountain protocol's gift).
-      </div>
+      <ul style="padding-top: 0.85rem">
+        <li><b>Changing anything restarts the stream</b>, and the receiver resets itself off the new session id. That's the fountain protocol's gift.</li>
+        <li><b>Frames are held for whole refresh cycles</b>, so the actual fps shown above is the nearest exact division of your screen's refresh rate.</li>
+        <li><b>Grids multiply data per frame but shrink the modules.</b> Get closer, or use a bigger display.</li>
+      </ul>
     </details>
-    <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
-    <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done.
+
+    <div id="key-row" style="display: none">
+      <span id="key-text"></span>
+      <canvas id="key-qr" width="16" height="16"></canvas>
     </div>
+
+    <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
+
+    <div class="actions">
+      <button id="yt" style="display: none">Encrypt for YouTube</button>
+      <button id="export" class="quiet" style="display: none">Export video</button>
+    </div>
+    <div id="export-out" class="hint"></div>
+
+    <h2>Encrypt for YouTube</h2>
+    <p>
+      Seals the file and records a clip built to survive being re-encoded, so
+      the codec's damage lands on frames the fountain can spare rather than on
+      your file.
+    </p>
+    <ul>
+      <li><b>Big modules and a slow code rate</b>, so each code spans several video frames instead of one.</li>
+      <li><b>Error correction raised to Q</b>, because a codec channel is corruption-dominant where the camera channel is erasure-dominant.</li>
+      <li><b>Heavy fountain redundancy</b>, rendered at 4K.</li>
+      <li><b>Measured:</b> byte-exact down to 240p against simulated AV1, VP9 and H.264 ladders, breaking at 144p.</li>
+      <li><b>Download at 480p or better.</b> Two rungs above the measured floor, deliberately, because per-title encoding moves the real bitrate by over 400%.</li>
+      <li><b>Not a YouTube round-trip.</b> That simulates the codecs YouTube delivers. Treat the clip as a durable second copy, not your only one.</li>
+    </ul>
+
+    <h2>While it runs</h2>
+    <ul>
+      <li><b>Maximum screen brightness helps.</b></li>
+      <li><b>The stream loops forever.</b> Stop when the receiver says it's done.</li>
+      <li><b>Drop any file anywhere on this page</b> to send it. Name and type travel inside the stream, and compressible files are deflated on the fly.</li>
+      <li><b>Sealed streams are ciphertext end to end</b>, so an exported clip can be hosted anywhere and only the key opens it.</li>
+    </ul>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
